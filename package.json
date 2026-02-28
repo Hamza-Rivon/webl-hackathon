@@ -1,0 +1,95 @@
+{
+  "name": "webl",
+  "version": "0.1.0",
+  "description": "Mobile-first AI-powered video editing platform",
+  "license": "MIT",
+  "private": true,
+  "author": {
+    "name": "WEBL Team"
+  },
+  "scripts": {
+    "build:packages": "pnpm --filter @webl/shared build && pnpm --filter @webl/prisma build",
+    "dev": "pnpm build:packages && pnpm --parallel --filter @webl/api --filter @webl/workers run dev",
+    "dev:api": "pnpm build:packages && pnpm --filter @webl/api dev",
+    "dev:workers": "pnpm build:packages && pnpm --filter @webl/workers dev",
+    "dev:mobile": "pnpm --filter @webl/mobile start",
+    "dev:admin": "pnpm --filter @webl/admin-dashboard dev",
+    "build": "pnpm build:packages && pnpm --parallel -r run build",
+    "build:api": "pnpm --filter @webl/api build",
+    "build:workers": "pnpm --filter @webl/workers build",
+    "lint": "pnpm --parallel -r run lint",
+    "typecheck": "pnpm --parallel -r run typecheck",
+    "test": "pnpm --parallel -r run test",
+    "db:sync-env": "cp .env packages/prisma/.env",
+    "db:generate": "pnpm db:sync-env && pnpm --filter @webl/prisma generate",
+    "db:push": "pnpm db:sync-env && pnpm --filter @webl/prisma push",
+    "db:migrate": "pnpm db:sync-env && pnpm --filter @webl/prisma migrate",
+    "db:migrate:deploy": "pnpm db:sync-env && pnpm --filter @webl/prisma migrate:deploy",
+    "db:seed": "pnpm db:sync-env && pnpm --filter @webl/prisma seed",
+    "db:setup-pgvector": "pnpm --filter @webl/prisma setup-pgvector",
+    "db:embeddings": "pnpm --filter @webl/prisma embeddings",
+    "db:studio": "pnpm --filter @webl/prisma studio",
+    "db:inspect-chunks": "tsx scripts/inspect-chunk-selection.ts",
+    "db:check-mux-transcript": "tsx scripts/check-mux-transcript.ts",
+    "db:trigger-render": "tsx scripts/trigger-render.ts",
+    "docker:dev": "docker-compose -f docker/docker-compose.dev.yml up -d",
+    "docker:dev:stop": "docker-compose -f docker/docker-compose.dev.yml down",
+    "docker:build": "docker-compose -f docker/docker-compose.yml build",
+    "docker:up": "docker-compose -f docker/docker-compose.yml up -d",
+    "docker:down": "docker-compose -f docker/docker-compose.yml down",
+    "docker:logs": "docker-compose -f docker/docker-compose.yml logs -f",
+    "docker:restart": "docker-compose -f docker/docker-compose.yml restart",
+    "deploy": "bash scripts/deploy.sh docker",
+    "deploy:pm2": "bash scripts/deploy.sh pm2",
+    "clean": "pnpm --parallel -r exec rm -rf node_modules dist .turbo"
+  },
+  "devDependencies": {
+    "@typescript-eslint/parser": "^8.25.0",
+    "@types/node": "^22.0.0",
+    "eslint": "^9.0.0",
+    "eslint-plugin-security": "^3.0.0",
+    "prettier": "^3.4.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "esbuild": "^0.24.0",
+      "lightningcss": "1.30.1"
+    },
+    "packageExtensions": {
+      "chromadb@*": {
+        "peerDependencies": {
+          "@google/generative-ai": ">=0.1.1"
+        }
+      }
+    },
+    "peerDependencyRules": {
+      "allowedVersions": {
+        "@google/generative-ai": "^0.1.1 || ^0.21.0",
+        "bs58": "^5.0.0 || ^6.0.0",
+        "react": "^18.0.0 || 19.1.0 || 19.1.4 || 19.2.3",
+        "react-dom": "^18.0.0 || 19.1.0 || 19.1.4 || 19.2.3"
+      }
+    },
+    "onlyBuiltDependencies": [
+      "@clerk/shared",
+      "@prisma/client",
+      "@prisma/engines",
+      "browser-tabs-lock",
+      "bufferutil",
+      "core-js",
+      "esbuild",
+      "msgpackr-extract",
+      "prisma",
+      "protobufjs",
+      "sharp",
+      "utf-8-validate"
+    ]
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@10.15.0+sha512.486ebc259d3e999a4e8691ce03b5cac4a71cbeca39372a9b762cb500cfdf0873e2cb16abe3d951b1ee2cf012503f027b98b6584e4df22524e0c7450d9ec7aa7b"
+}

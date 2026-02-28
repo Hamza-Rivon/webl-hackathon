@@ -1,0 +1,41 @@
+{
+  "name": "@webl/prisma",
+  "version": "0.1.0",
+  "description": "WEBL Prisma Database Client with Neon Adapter",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "generate": "prisma generate",
+    "build": "rm -f tsconfig.tsbuildinfo && tsc",
+    "dev": "tsc --watch",
+    "push": "prisma db push",
+    "migrate": "prisma migrate dev",
+    "migrate:deploy": "prisma migrate deploy",
+    "seed": "tsx seed.ts",
+    "embeddings": "tsx generate-embeddings.ts",
+    "studio": "prisma studio",
+    "setup-pgvector": "tsx setup-pgvector.ts"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0",
+    "@neondatabase/serverless": "^0.10.0",
+    "@prisma/adapter-neon": "^6.0.0",
+    "@prisma/client": "^6.0.0",
+    "chromadb": "^1.9.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.0",
+    "prisma": "^6.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

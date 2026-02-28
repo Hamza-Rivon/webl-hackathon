@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "1eeb7649-5535-48d6-9625-d8da984d8f63"
+      }
+    },
+    "android": {
+      "package": "com.myorganizationwebl.webl"
+    },
+    "ios": {
+      "bundleIdentifier": "com.myorganizationwebl.webl",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    }
+  }
+}

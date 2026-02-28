@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "noEmit": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "paths": {
+      "@webl/shared": ["./packages/shared/src"],
+      "@webl/shared/*": ["./packages/shared/src/*"],
+      "@webl/prisma": ["./packages/prisma/src"],
+      "@webl/prisma/*": ["./packages/prisma/src/*"]
+    }
+  },
+  "exclude": ["node_modules", "dist", ".turbo"]
+}

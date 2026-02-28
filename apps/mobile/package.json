@@ -1,0 +1,81 @@
+{
+  "name": "@webl/mobile",
+  "version": "0.1.0",
+  "description": "WEBL Mobile App - Expo React Native",
+  "private": true,
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "web": "expo start --web",
+    "prebuild": "expo prebuild",
+    "build:dev": "eas build --profile development --platform all",
+    "lint": "eslint app components contexts hooks lib stores",
+    "typecheck": "tsc --noEmit",
+    "icons:check": "node scripts/validate-ionicons.mjs"
+  },
+  "dependencies": {
+    "@clerk/clerk-expo": "^2.19.0",
+    "@expo/metro-runtime": "~6.1.2",
+    "@expo/vector-icons": "^15.0.3",
+    "@shopify/flash-list": "^2.0.2",
+    "@tanstack/react-query": "^5.60.0",
+    "axios": "^1.7.0",
+    "bs58": "^6.0.0",
+    "expo": "~54.0.31",
+    "expo-asset": "~12.0.12",
+    "expo-audio": "^1.1.1",
+    "expo-auth-session": "~7.0.10",
+    "expo-blur": "^15.0.8",
+    "expo-camera": "~17.0.10",
+    "expo-constants": "~18.0.13",
+    "expo-document-picker": "~14.0.8",
+    "expo-file-system": "~19.0.21",
+    "expo-glass-effect": "^0.1.8",
+    "expo-haptics": "~15.0.8",
+    "expo-image": "^3.0.11",
+    "expo-image-picker": "~17.0.10",
+    "expo-linking": "~8.0.11",
+    "expo-media-library": "~18.2.1",
+    "expo-router": "~6.0.21",
+    "expo-secure-store": "~15.0.8",
+    "expo-sharing": "~14.0.8",
+    "expo-splash-screen": "~31.0.13",
+    "expo-status-bar": "~3.0.9",
+    "expo-system-ui": "~6.0.9",
+    "expo-video": "^3.0.15",
+    "expo-web-browser": "~15.0.10",
+    "nativewind": "^4.2.1",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "react-native": "0.81.5",
+    "react-native-gesture-handler": "~2.28.0",
+    "react-native-reanimated": "~4.1.1",
+    "react-native-safe-area-context": "~5.6.0",
+    "react-native-screens": "~4.16.0",
+    "react-native-webview": "^13.15.0",
+    "react-native-worklets": "~0.5.1",
+    "socket.io-client": "^4.8.3",
+    "zod": "^3.23.0",
+    "zustand": "^5.0.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.0",
+    "@types/react": "~19.1.0",
+    "babel-preset-expo": "~54.0.10",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^5.7.0"
+  },
+  "overrides": {
+    "lightningcss": "1.30.1"
+  },
+  "expo": {
+    "doctor": {
+      "appConfigFieldsNotSyncedCheck": {
+        "enabled": false
+      }
+    }
+  },
+  "packageManager": "pnpm@10.15.0+sha512.486ebc259d3e999a4e8691ce03b5cac4a71cbeca39372a9b762cb500cfdf0873e2cb16abe3d951b1ee2cf012503f027b98b6584e4df22524e0c7450d9ec7aa7b"
+}

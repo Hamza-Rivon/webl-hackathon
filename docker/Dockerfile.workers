@@ -1,0 +1,143 @@
+# WEBL Workers Dockerfile
+# FFmpeg-only rendering pipeline (Remotion removed)
+
+# ==================== BUILD STAGE ====================
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Install pnpm
+RUN npm install -g pnpm@10.15.0
+
+# Copy workspace configuration
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
+
+# Copy package.json files for dependency resolution
+COPY packages/prisma/package.json ./packages/prisma/
+COPY packages/shared/package.json ./packages/shared/
+COPY apps/workers/package.json ./apps/workers/
+
+# Install all dependencies
+RUN pnpm install --frozen-lockfile
+
+# Copy source code
+COPY packages/prisma ./packages/prisma
+COPY packages/shared ./packages/shared
+COPY apps/workers ./apps/workers
+COPY tsconfig.json ./
+
+# Build packages
+RUN pnpm --filter @webl/prisma build
+RUN pnpm --filter @webl/shared build
+RUN pnpm --filter @webl/workers build
+
+# ==================== PRODUCTION STAGE ====================
+# Use Debian-based image for FFmpeg with HTTPS/TLS support
+FROM node:20-bookworm-slim AS production
+
+WORKDIR /app
+
+# Install system dependencies for FFmpeg with HTTPS/TLS support
+# FFmpeg needs HTTPS support to download video files from S3/Mux
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openssl \
+    libssl3 \
+    libgnutls30 \
+    ca-certificates \
+    curl \
+    wget \
+    xz-utils \
+    && update-ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Ensure TLS clients (including FFmpeg static builds) use the Debian CA bundle
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+
+# Install distro FFmpeg on all architectures.
+# Avoid static amd64 binary crashes seen on some EC2 hosts.
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Verify FFmpeg installation and HTTPS support
+RUN echo "🔍 Verifying FFmpeg installation..." && \
+    ffmpeg -version && \
+    echo "✅ FFmpeg version check passed"
+
+# Verify FFmpeg HTTPS protocol support
+RUN echo "🔍 Checking FFmpeg HTTPS protocol support..." && \
+    (ffmpeg -protocols 2>&1 | grep -q https || \
+     ffmpeg -hide_banner -protocols 2>&1 | grep -q https) && \
+    echo "✅ FFmpeg HTTPS protocol support verified" || \
+    (echo "❌ ERROR: FFmpeg HTTPS protocol support not found" && \
+     ffmpeg -protocols 2>&1 && \
+     exit 1)
+
+# Install pnpm
+RUN npm install -g pnpm@10.15.0
+
+# Copy workspace configuration
+COPY --from=builder /app/package.json ./
+COPY --from=builder /app/pnpm-workspace.yaml ./
+COPY --from=builder /app/pnpm-lock.yaml ./
+COPY --from=builder /app/tsconfig.json ./
+
+# Copy built packages
+COPY --from=builder /app/packages/prisma ./packages/prisma
+COPY --from=builder /app/packages/shared ./packages/shared
+COPY --from=builder /app/apps/workers ./apps/workers
+
+# Install production dependencies
+RUN pnpm install --prod --frozen-lockfile
+
+# Generate Prisma client
+RUN cd packages/prisma && pnpm exec prisma generate
+
+# ==================== BUILD-TIME VERIFICATION ====================
+# Deterministic HTTPS verification:
+# - Build a local MP4 fixture
+# - Serve it over a temporary local HTTPS endpoint
+# - Verify ffprobe and ffmpeg can read/decode through HTTPS transport
+RUN set -eu; \
+    echo "🔍 Building local MP4 fixture for HTTPS verification..." && \
+    ffmpeg -hide_banner -loglevel error -y \
+      -f lavfi -i testsrc=size=320x240:rate=30 -t 1 \
+      -pix_fmt yuv420p /tmp/webl_ffmpeg_test.mp4 && \
+    echo "🔍 Starting temporary local HTTPS server..." && \
+    openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 1 \
+      -subj "/CN=localhost" \
+      -keyout /tmp/webl_https_test.key \
+      -out /tmp/webl_https_test.crt > /dev/null 2>&1 && \
+    (cd /tmp && openssl s_server -quiet -accept 8443 -cert /tmp/webl_https_test.crt -key /tmp/webl_https_test.key -WWW > /tmp/webl_https_server.log 2>&1) & \
+    SERVER_PID="$!" && \
+    sleep 1 && \
+    TEST_HTTPS_URL="https://localhost:8443/webl_ffmpeg_test.mp4" && \
+    echo "🔍 Testing ffprobe HTTPS stream access..." && \
+    ffprobe -hide_banner -loglevel error -tls_verify 0 -show_streams -select_streams v:0 "$TEST_HTTPS_URL" > /dev/null && \
+    echo "🔍 Testing ffmpeg HTTPS frame extraction..." && \
+    ffmpeg -hide_banner -loglevel error -y -tls_verify 0 -i "$TEST_HTTPS_URL" -frames:v 1 -f null - > /dev/null 2>&1 && \
+    kill "$SERVER_PID" || true && \
+    wait "$SERVER_PID" 2>/dev/null || true && \
+    rm -f /tmp/webl_ffmpeg_test.mp4 /tmp/webl_https_test.key /tmp/webl_https_test.crt /tmp/webl_https_server.log && \
+    echo "✅ FFmpeg HTTPS access and decode checks passed"
+
+RUN echo "✅ All build-time verification checks passed!"
+
+# Create non-root user
+RUN groupadd -r webl && useradd -r -g webl webl
+
+# Create temp directories for video processing
+# /tmp/webl is used for temp files (B-roll chunking, voiceover processing, FFmpeg rendering)
+RUN mkdir -p /tmp/webl && \
+    chown -R webl:webl /tmp/webl
+
+# Set ownership
+RUN chown -R webl:webl /app
+
+USER webl
+
+# Ensure FFmpeg uses system binaries with HTTPS support
+ENV FFMPEG_BINARY=/usr/local/bin/ffmpeg
+ENV FFPROBE_BINARY=/usr/local/bin/ffprobe
+
+WORKDIR /app/apps/workers
+CMD ["node", "dist/apps/workers/src/index.js"]

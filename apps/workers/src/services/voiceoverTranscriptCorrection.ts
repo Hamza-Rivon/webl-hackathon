@@ -1,8 +1,15 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import OpenAI from 'openai';
 import { supportsOpenAiTemperature } from './openaiModelSupport.js';
+import { callBedrockMistralChat } from './bedrockMistral.js';
 import { config } from '../config.js';
 import { logger as sharedLogger } from '@webl/shared';
+import {
+  type AiProvider,
+  getOpenAiCompatibleClient,
+  getOpenAiCompatibleModel,
+  getProviderLogContext,
+  isProviderConfigured,
+} from './llmProvider.js';
 
 export interface WordTimestamp {
   word: string;
@@ -519,16 +526,23 @@ Rules:
 }
 
 async function callTranscriptCorrectionLlm(prompt: string, logger = sharedLogger): Promise<WordTimestamp[] | null> {
-  const provider = config.ai.provider;
+  const provider = config.ai.provider as AiProvider;
 
-  if (provider === 'gemini' && !config.ai.geminiApiKey) {
-    return null;
-  }
-  if (provider === 'openai' && !config.openai.apiKey) {
+  if (!isProviderConfigured(provider)) {
     return null;
   }
 
   try {
+    if (provider === 'mistral') {
+      const text = await callBedrockMistralChat({
+        systemPrompt: 'You output corrected word-level transcripts that match a script. Return JSON only.',
+        userPrompt: prompt,
+        temperature: 0.2,
+      });
+      const parsed = parseAIJsonResponse<{ words?: WordTimestamp[] }>(text);
+      return Array.isArray(parsed.words) ? parsed.words : null;
+    }
+
     if (provider === 'gemini') {
       const genAI = new GoogleGenerativeAI(config.ai.geminiApiKey);
       const model = genAI.getGenerativeModel({
@@ -541,10 +555,14 @@ async function callTranscriptCorrectionLlm(prompt: string, logger = sharedLogger
       return Array.isArray(parsed.words) ? parsed.words : null;
     }
 
-    const client = new OpenAI({ apiKey: config.openai.apiKey });
-    const temperature = supportsOpenAiTemperature(config.openai.model, null) ? 0.2 : undefined;
+    const client = getOpenAiCompatibleClient(provider);
+    const model = getOpenAiCompatibleModel(config.openai.model, provider);
+    if (provider === 'runpod') {
+      logger.info('[Runpod][transcript-correction] request', getProviderLogContext(provider));
+    }
+    const temperature = supportsOpenAiTemperature(model, null) ? 0.2 : undefined;
     const response = await client.chat.completions.create({
-      model: config.openai.model,
+      model,
       response_format: { type: 'json_object' },
       messages: [
         {
@@ -557,6 +575,12 @@ async function callTranscriptCorrectionLlm(prompt: string, logger = sharedLogger
     });
     const content = response.choices[0]?.message?.content ?? '{}';
     const parsed = parseAIJsonResponse<{ words?: WordTimestamp[] }>(content);
+    if (provider === 'runpod') {
+      logger.info('[Runpod][transcript-correction] response', {
+        ...getProviderLogContext(provider),
+        wordCount: Array.isArray(parsed.words) ? parsed.words.length : 0,
+      });
+    }
     return Array.isArray(parsed.words) ? parsed.words : null;
   } catch (error) {
     logger.error('Transcript correction LLM call failed', error);
@@ -597,10 +621,8 @@ export async function reconstructTranscriptWithLlm(args: {
   const chunkResults: ChunkResult[] = [];
   let fallbackChunks = 0;
   let llmCallCount = 0;
-  const provider = config.ai.provider;
-  const canCallLlm =
-    (provider === 'gemini' && !!config.ai.geminiApiKey) ||
-    (provider === 'openai' && !!config.openai.apiKey);
+  const provider = config.ai.provider as AiProvider;
+  const canCallLlm = isProviderConfigured(provider);
 
   for (const chunk of chunks) {
     const window = buildTranscriptWindow(chunk, normalizedTranscript, totalScriptWords);

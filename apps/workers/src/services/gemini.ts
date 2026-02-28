@@ -17,7 +17,7 @@
  * semantic_matching → cut_plan_generation (uses selectChunksForSegment) → cut_plan_validation
  * 
  * Provider Selection:
- * - Set AI_PROVIDER=gemini or AI_PROVIDER=openai in environment variables
+ * - Set AI_PROVIDER=gemini, AI_PROVIDER=openai, or AI_PROVIDER=runpod in environment variables
  * - Defaults to 'gemini' if not specified
  */
 
@@ -27,6 +27,13 @@ import { supportsOpenAiTemperature } from './openaiModelSupport.js';
 import { readFile } from 'fs/promises';
 import { config } from '../config.js';
 import { logger } from '@webl/shared';
+import {
+  type AiProvider,
+  getOpenAiCompatibleClient,
+  getOpenAiCompatibleModel,
+  getProviderLogContext,
+} from './llmProvider.js';
+import { callBedrockMistralChat } from './bedrockMistral.js';
 
 // ==================== Types ====================
 
@@ -213,13 +220,14 @@ function getGeminiModel(): GenerativeModel {
 
 function getOpenAIClient(): OpenAI {
   if (!openaiClient) {
-    if (!config.openai.apiKey) {
-      throw new Error('OPENAI_API_KEY is not configured. Set AI_PROVIDER=openai and provide OPENAI_API_KEY in .env');
+    if (config.ai.provider !== 'openai' && config.ai.provider !== 'runpod') {
+      throw new Error(
+        `AI_PROVIDER=${config.ai.provider} does not support OpenAI-compatible client for chunk selection`
+      );
     }
-    openaiClient = new OpenAI({
-      apiKey: config.openai.apiKey,
-    });
-    logger.info(`OpenAI service initialized with model: ${config.openai.model}`);
+    openaiClient = getOpenAiCompatibleClient(config.ai.provider as AiProvider);
+    const model = getOpenAiCompatibleModel(config.openai.model, config.ai.provider as AiProvider);
+    logger.info(`${config.ai.provider.toUpperCase()} service initialized with model: ${model}`);
   }
   return openaiClient;
 }
@@ -773,6 +781,8 @@ async function selectChunksForSegmentOpenAI(
   input: ChunkSelectionInput
 ): Promise<ChunkSelectionResult> {
   const client = getOpenAIClient();
+  const provider = config.ai.provider as AiProvider;
+  const model = getOpenAiCompatibleModel(config.openai.model, provider);
   
   // Build the same prompt structure as Gemini
   const previousChunksContext = input.previousChunks && input.previousChunks.length > 0
@@ -865,9 +875,17 @@ Consider visual continuity, semantic matching, and diversity.
 - Do NOT include markdown code blocks, explanations, or any text outside the JSON
 - The response must be parseable JSON only`;
 
-  const temperature = supportsOpenAiTemperature(config.openai.model, null) ? 0.7 : undefined;
+  const temperature = supportsOpenAiTemperature(model, null) ? 0.7 : undefined;
+  if (provider === 'runpod') {
+    logger.info('[Runpod][chunk-selection] request', {
+      ...getProviderLogContext(provider),
+      chunksNeeded: input.chunksNeeded,
+      candidateCount: input.candidateChunks.length,
+      hasPositionAwareCandidates: Boolean(input.candidatesByPosition),
+    });
+  }
   const response = await client.chat.completions.create({
-    model: config.openai.model,
+    model,
     messages: [
       {
         role: 'system',
@@ -884,15 +902,24 @@ Consider visual continuity, semantic matching, and diversity.
 
   const content = response.choices[0]?.message?.content;
   if (!content) {
-    throw new Error('OpenAI returned empty response');
+    throw new Error(`${provider.toUpperCase()} returned empty response`);
   }
 
   const selection = parseJsonResponse<ChunkSelectionResult>(content);
+  if (provider === 'runpod') {
+    logger.info('[Runpod][chunk-selection] response', {
+      ...getProviderLogContext(provider),
+      selectedCount: Array.isArray(selection.selectedChunks) ? selection.selectedChunks.length : 0,
+      totalScore: selection.totalScore,
+      diversityScore: selection.diversityScore,
+      visualCoherence: selection.visualCoherence,
+    });
+  }
   
   // Validate that primary chunk is included
   const primaryIncluded = selection.selectedChunks.some(c => c.chunkId === input.primaryChunk.id);
   if (!primaryIncluded) {
-    logger.warn('Primary chunk not in OpenAI selection, adding it as first chunk');
+    logger.warn(`Primary chunk not in ${provider.toUpperCase()} selection, adding it as first chunk`);
     selection.selectedChunks.unshift({
       chunkId: input.primaryChunk.id,
       order: 1,
@@ -913,7 +940,7 @@ Consider visual continuity, semantic matching, and diversity.
   }
   
   logger.info(
-    `OpenAI selected ${selection.selectedChunks.length} chunks with score ${(selection.totalScore * 100).toFixed(1)}% ` +
+    `${provider.toUpperCase()} selected ${selection.selectedChunks.length} chunks with score ${(selection.totalScore * 100).toFixed(1)}% ` +
     `(diversity: ${(selection.diversityScore * 100).toFixed(1)}%, coherence: ${selection.visualCoherence})`
   );
   
@@ -921,10 +948,146 @@ Consider visual continuity, semantic matching, and diversity.
 }
 
 /**
+ * Select chunks using Bedrock Mistral
+ */
+async function selectChunksForSegmentMistral(
+  input: ChunkSelectionInput
+): Promise<ChunkSelectionResult> {
+  // Build the same prompt structure as Gemini/OpenAI
+  const previousChunksContext = input.previousChunks && input.previousChunks.length > 0
+    ? `
+## Previous Chunks in Sequence (for Visual Continuity)
+${input.previousChunks.map((chunk, idx) => `
+- Position ${input.previousChunks!.length - input.previousChunks!.length + idx}: Chunk ${chunk.chunkIndex} from Slot Clip ${chunk.slotClipId}
+`).join('')}
+
+**Visual Continuity Guidelines:**
+- If previous chunks are from the same video (same Slot Clip ID), prefer continuing the sequence chronologically
+- Consider visual flow: does this chunk naturally follow the previous ones?
+- Balance semantic match with visual continuity
+- If a sequence has started (2+ chunks from same video), prefer continuing it in chronological order
+`
+    : '';
+
+  const positionAwareContext = input.candidatesByPosition
+    ? `
+## Position-Aware Candidates (IMPORTANT)
+The following candidates have been pre-filtered to match the alternation pattern for each position:
+${input.candidatesByPosition.map((positionCandidates, posIdx) => `
+### Position ${posIdx + 1} (${positionCandidates.length} candidates matching pattern):
+${positionCandidates.map((chunk, idx) => `
+  ${idx + 1}. ID: ${chunk.id}, Slot Clip ${chunk.slotClipId}, Chunk ${chunk.chunkIndex}, Tags: ${chunk.aiTags.slice(0, 3).join(', ')}${chunk.matchScore ? `, Score: ${(chunk.matchScore * 100).toFixed(1)}%` : ''}
+`).join('')}
+`).join('')}
+
+**Selection Strategy:**
+- Each position has its own filtered candidate list that matches the alternation pattern
+- You can select from any position's candidates, but respect the pattern requirements
+- Prioritize semantic match and visual continuity while respecting pattern constraints
+`
+    : '';
+
+  const prompt = `${CHUNK_SELECTION_PROMPT}
+
+## Voiceover Segment
+- Text: "${input.segment.text}"
+- Duration: ${input.segment.durationMs}ms (${(input.segment.durationMs / 1000).toFixed(2)}s) - **Note: This determines how many 2-second chunks are needed, but each chunk is always exactly 2 seconds**
+- Keywords: ${input.segment.keywords.join(', ')}
+- Emotional Tone: ${input.segment.emotionalTone || 'neutral'}
+${previousChunksContext}
+## Primary Matched Chunk (MUST be included)
+- ID: ${input.primaryChunk.id}
+- Source: Slot Clip ${input.primaryChunk.slotClipId}
+- Position in Source: Chunk ${input.primaryChunk.chunkIndex} (${(input.primaryChunk.startMs / 1000).toFixed(2)}s - ${(input.primaryChunk.endMs / 1000).toFixed(2)}s)
+- **Duration**: 2 seconds (all chunks are fixed 2-second duration)
+- AI Tags: ${input.primaryChunk.aiTags.join(', ')}
+- Summary: ${input.primaryChunk.aiSummary}
+- Match Score: ${(input.primaryChunk.matchScore * 100).toFixed(1)}%
+
+${positionAwareContext || `## Candidate Chunks (Select ${input.chunksNeeded - 1} additional)
+**Note**: All chunks are exactly 2 seconds in duration (fixed, no trimming or scaling)
+${input.candidateChunks.map((chunk, idx) => `
+### Candidate ${idx + 1}
+- ID: ${chunk.id}
+- Source: Slot Clip ${chunk.slotClipId}
+- Position in Source: Chunk ${chunk.chunkIndex} (${(chunk.startMs / 1000).toFixed(2)}s - ${(chunk.endMs / 1000).toFixed(2)}s)
+- Duration: 2 seconds (fixed)
+- AI Tags: ${chunk.aiTags.join(', ')}
+- Summary: ${chunk.aiSummary}
+- Match Score: ${chunk.matchScore ? (chunk.matchScore * 100).toFixed(1) + '%' : 'N/A'}
+`).join('\n')}`}
+
+## Requirements
+- **Chunks Needed**: ${input.chunksNeeded} total (1 primary + ${input.chunksNeeded - 1} additional)
+- **Chunk Duration**: All chunks are exactly 2 seconds (fixed duration, no trimming or scaling)
+- **Segment Duration**: ${(input.segment.durationMs / 1000).toFixed(2)}s (provided for context only - chunks are always 2s)
+${input.templateRequirements ? `
+- Template Target Duration: ${input.templateRequirements.targetDurationSeconds || 'N/A'}s (reference only)
+- Exact Chunk Count: ${input.templateRequirements.exactChunkCount || 'N/A'}
+- Prefer Different Clips: ${input.templateRequirements.preferDifferentClipsPerBeat ? 'Yes' : 'No'}
+` : ''}
+${input.alternationPattern ? `
+## Alternation Pattern (IMPORTANT)
+The template specifies an alternation pattern that controls chunk type (A-roll vs B-roll) for each position:
+- Pattern: ${JSON.stringify(input.alternationPattern)}
+- Pattern repeats cyclically for each chunk position
+${input.candidatesByPosition ? '- Candidates have been pre-filtered by position to match the pattern' : '- All candidate chunks provided have already been filtered to match the pattern for at least one position'}
+- You should select chunks that best match the voiceover while respecting the pattern requirements
+` : ''}
+
+Select the best ${input.chunksNeeded - 1} additional chunks and order ALL ${input.chunksNeeded} chunks (including primary) from best to worst match.
+**Remember**: Each chunk is exactly 2 seconds - you're selecting which chunks to use and their order, not matching durations.
+Consider visual continuity, semantic matching, and diversity.
+
+## REMINDER: OUTPUT FORMAT
+- Respond with ONLY valid JSON object matching the structure above
+- Do NOT include markdown code blocks, explanations, or any text outside the JSON
+- The response must be parseable JSON only`;
+
+  const content = await callBedrockMistralChat({
+    systemPrompt: 'You are an expert video editor. Always respond with valid JSON only, no markdown code blocks or explanations.',
+    userPrompt: prompt,
+    temperature: 0.7,
+  });
+
+  const selection = parseJsonResponse<ChunkSelectionResult>(content);
+
+  // Validate that primary chunk is included
+  const primaryIncluded = selection.selectedChunks.some(c => c.chunkId === input.primaryChunk.id);
+  if (!primaryIncluded) {
+    logger.warn('Primary chunk not in Mistral/Bedrock selection, adding it as first chunk');
+    selection.selectedChunks.unshift({
+      chunkId: input.primaryChunk.id,
+      order: 1,
+      reason: 'Primary semantic match',
+      score: input.primaryChunk.matchScore,
+      visualContinuity: 'good',
+      semanticMatch: 'good',
+    });
+    // Reorder all chunks
+    selection.selectedChunks.forEach((chunk, idx) => {
+      chunk.order = idx + 1;
+    });
+  }
+
+  // Ensure we have exactly chunksNeeded chunks
+  if (selection.selectedChunks.length > input.chunksNeeded) {
+    selection.selectedChunks = selection.selectedChunks.slice(0, input.chunksNeeded);
+  }
+
+  logger.info(
+    `MISTRAL/BEDROCK selected ${selection.selectedChunks.length} chunks with score ${(selection.totalScore * 100).toFixed(1)}% ` +
+    `(diversity: ${(selection.diversityScore * 100).toFixed(1)}%, coherence: ${selection.visualCoherence})`
+  );
+
+  return selection;
+}
+
+/**
  * Intelligently select and order chunks for a voiceover segment using AI
- * 
+ *
  * IMPORTANT: Only ONE provider is used at a time based on AI_PROVIDER env var.
- * Set AI_PROVIDER=gemini or AI_PROVIDER=openai in .env to choose which provider to use.
+ * Set AI_PROVIDER=gemini, AI_PROVIDER=openai, or AI_PROVIDER=runpod in .env.
  * 
  * @param input - Segment, primary chunk, candidate chunks, and requirements
  * @returns Structured selection result with ordered chunks and reasoning
@@ -932,12 +1095,12 @@ Consider visual continuity, semantic matching, and diversity.
 export async function selectChunksForSegment(
   input: ChunkSelectionInput
 ): Promise<ChunkSelectionResult> {
-  const provider = config.ai.provider;
+  const provider = config.ai.provider as AiProvider;
   
   // Validate provider is set correctly
-  if (provider !== 'gemini' && provider !== 'openai') {
+  if (provider !== 'gemini' && provider !== 'openai' && provider !== 'runpod' && provider !== 'mistral') {
     throw new Error(
-      `Invalid AI_PROVIDER="${provider}". Must be either "gemini" or "openai". ` +
+      `Invalid AI_PROVIDER="${provider}". Must be either "gemini", "openai", "runpod", or "mistral". ` +
       `Set AI_PROVIDER in .env to choose which provider to use.`
     );
   }
@@ -945,10 +1108,17 @@ export async function selectChunksForSegment(
   logger.info(`Using ${provider.toUpperCase()} for chunk selection (only this provider will be used)`);
   
   // Only call the selected provider - never both
-  if (provider === 'openai') {
+  if (provider === 'mistral') {
+    return withRetry(
+      () => selectChunksForSegmentMistral(input),
+      'selectChunksForSegment (Mistral/Bedrock)'
+    );
+  }
+
+  if (provider === 'openai' || provider === 'runpod') {
     return withRetry(
       () => selectChunksForSegmentOpenAI(input),
-      'selectChunksForSegment (OpenAI)'
+      `selectChunksForSegment (${provider.toUpperCase()})`
     );
   } else {
     // Default to Gemini if provider is 'gemini' or anything else

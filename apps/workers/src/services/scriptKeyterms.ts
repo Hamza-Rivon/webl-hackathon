@@ -1,10 +1,17 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import OpenAI from 'openai';
 import { supportsOpenAiTemperature } from './openaiModelSupport.js';
+import { callBedrockMistralChat } from './bedrockMistral.js';
 import { prisma } from './db.js';
 import { usageService } from './usage.js';
 import { config } from '../config.js';
 import { logger as sharedLogger, extractNormalizedKeytermCandidatesFromScript, normalizeKeytermTerm } from '@webl/shared';
+import {
+  type AiProvider,
+  getOpenAiCompatibleClient,
+  getOpenAiCompatibleModel,
+  getProviderLogContext,
+  isProviderConfigured,
+} from './llmProvider.js';
 
 const KEYTERM_CATEGORIES = [
   'company',
@@ -58,10 +65,9 @@ async function extractKeytermsWithLlm(args: {
   logger?: typeof sharedLogger;
 }): Promise<LlmKeyterm[]> {
   const logger = args.logger ?? sharedLogger;
-  const provider = config.ai.provider;
+  const provider = config.ai.provider as AiProvider;
 
-  if (provider === 'gemini' && !config.ai.geminiApiKey) return [];
-  if (provider === 'openai' && !config.openai.apiKey) return [];
+  if (!isProviderConfigured(provider)) return [];
 
   const prompt = `You extract important "keyterms" from a video script so an ASR model can transcribe them correctly.
 
@@ -87,6 +93,20 @@ Rules:
 - If the script is simple and has no special terms, return an empty list.`;
 
   try {
+    if (provider === 'mistral') {
+      await usageService.recordUsage(args.userId, {
+        openAiChatCalls: 1,
+        keytermExtractionCalls: 1,
+      });
+      const text = await callBedrockMistralChat({
+        systemPrompt: 'Extract keyterms for ASR. Return JSON only.',
+        userPrompt: prompt,
+        temperature: 0.2,
+      });
+      const parsed = parseAIJsonResponse<{ keyterms?: LlmKeyterm[] }>(text);
+      return Array.isArray(parsed.keyterms) ? parsed.keyterms : [];
+    }
+
     if (provider === 'gemini') {
       const genAI = new GoogleGenerativeAI(config.ai.geminiApiKey);
       const model = genAI.getGenerativeModel({
@@ -103,14 +123,18 @@ Rules:
       return Array.isArray(parsed.keyterms) ? parsed.keyterms : [];
     }
 
-    const client = new OpenAI({ apiKey: config.openai.apiKey });
+    const client = getOpenAiCompatibleClient(provider);
+    const model = getOpenAiCompatibleModel(config.openai.model, provider);
+    if (provider === 'runpod') {
+      logger.info('[Runpod][keyterms] request', getProviderLogContext(provider));
+    }
     await usageService.recordUsage(args.userId, {
       openAiChatCalls: 1,
       keytermExtractionCalls: 1,
     });
-    const temperature = supportsOpenAiTemperature(config.openai.model, null) ? 0.2 : undefined;
+    const temperature = supportsOpenAiTemperature(model, null) ? 0.2 : undefined;
     const response = await client.chat.completions.create({
-      model: config.openai.model,
+      model,
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: 'Extract keyterms for ASR. Return JSON only.' },
@@ -120,6 +144,12 @@ Rules:
     });
     const content = response.choices[0]?.message?.content ?? '{}';
     const parsed = parseAIJsonResponse<{ keyterms?: LlmKeyterm[] }>(content);
+    if (provider === 'runpod') {
+      logger.info('[Runpod][keyterms] response', {
+        ...getProviderLogContext(provider),
+        keytermCount: Array.isArray(parsed.keyterms) ? parsed.keyterms.length : 0,
+      });
+    }
     return Array.isArray(parsed.keyterms) ? parsed.keyterms : [];
   } catch (error) {
     logger.error('Keyterm extraction LLM call failed', error);

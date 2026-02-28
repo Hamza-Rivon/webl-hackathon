@@ -18,9 +18,9 @@ import { startCronJobs } from './cron.js';
 function validateAIProviderConfig() {
   const provider = config.ai.provider;
   
-  if (provider !== 'gemini' && provider !== 'openai') {
+  if (provider !== 'gemini' && provider !== 'openai' && provider !== 'runpod' && provider !== 'mistral') {
     throw new Error(
-      `Invalid AI_PROVIDER="${provider}". Must be either "gemini" or "openai". ` +
+      `Invalid AI_PROVIDER="${provider}". Must be "gemini", "openai", "runpod", or "mistral". ` +
       `Set AI_PROVIDER in .env to choose which provider to use.`
     );
   }
@@ -42,6 +42,25 @@ function validateAIProviderConfig() {
       );
     }
     logger.info(`✅ AI Provider: OpenAI (model: ${config.openai.model})`);
+  } else if (provider === 'runpod') {
+    if (!config.vllm.baseUrl) {
+      throw new Error(
+        'AI_PROVIDER is set to "runpod" but VLLM_BASE_URL is not configured. ' +
+        'Please set VLLM_BASE_URL in your .env file.'
+      );
+    }
+    logger.info(`✅ AI Provider: Runpod vLLM (model: ${config.vllm.model}, url: ${config.vllm.baseUrl})`);
+  } else if (provider === 'mistral') {
+    if (
+      !config.bedrock.bearerToken &&
+      !(config.bedrock.accessKeyId && config.bedrock.secretAccessKey)
+    ) {
+      throw new Error(
+        'AI_PROVIDER is set to "mistral" but no AWS Bedrock credentials configured. ' +
+        'Please set AWS_BEARER_TOKEN_BEDROCK or AWS_BEDROCK_ACCESS_KEY_ID + AWS_BEDROCK_SECRET_ACCESS_KEY in your .env file.'
+      );
+    }
+    logger.info(`✅ AI Provider: Mistral via Bedrock (model: ${config.bedrock.mistralModel}, region: ${config.bedrock.region})`);
   }
   
   // Log that only the selected provider will be used

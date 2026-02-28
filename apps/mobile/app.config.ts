@@ -106,7 +106,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     reactCompiler: true,
   },
   extra: {
-    apiUrl: process.env.EXPO_PUBLIC_API_URL || process.env.API_URL || 'http://192.168.1.14:3000',
+    apiUrl: process.env.EXPO_PUBLIC_API_URL || process.env.API_URL || 'http://localhost:3000',
     eas: {
       projectId: process.env.EAS_PROJECT_ID || 'c8d5d1b1-539d-4a89-89df-6a6dcd7e2ef7',
     },

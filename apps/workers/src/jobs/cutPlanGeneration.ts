@@ -55,6 +55,8 @@ interface CutWindow {
 interface WindowCandidate {
   chunkId: string;
   score: number;
+  slotType: string;
+  motifKey: string;
 }
 
 interface ChunkInfo {
@@ -62,6 +64,7 @@ interface ChunkInfo {
   s3Key: string | null;
   durationMs: number;
   slotType: string;
+  aiTags: string[] | null;
 }
 
 interface SectionOverride {
@@ -105,7 +108,8 @@ interface GeneratedCut {
 
 // ==================== CONSTANTS ====================
 
-const MAX_CUT_DURATION_MS = 2000;
+const MAX_CUT_DURATION_MS = 1900;
+const MIN_CUT_DURATION_MS = 700;
 
 /**
  * Emotion-driven max window duration. Maps VoiceoverSegment.emotionalTone
@@ -113,15 +117,36 @@ const MAX_CUT_DURATION_MS = 2000;
  * vulnerable/reflective emotions get longer holds.
  * Falls back to MAX_CUT_DURATION_MS if tone is unrecognized.
  */
-const EMOTION_TO_MAX_WINDOW_MS: Record<string, number> = {
-  excited: 1200, urgent: 1000, surprised: 1200, angry: 1100, passionate: 1200,
-  curious: 1800, confident: 1600, determined: 1700, hopeful: 1800, proud: 1600,
-  vulnerable: 2500, reflective: 2500, sad: 2500, calm: 2200, intimate: 2400,
-  warm: 2000, serious: 1800, skeptical: 1600, frustrated: 1400, neutral: 2000,
+const EMOTION_TO_WINDOW_RANGE_MS: Record<string, { min: number; max: number }> = {
+  excited: { min: 800, max: 1250 },
+  urgent: { min: 700, max: 1150 },
+  surprised: { min: 850, max: 1300 },
+  angry: { min: 800, max: 1200 },
+  passionate: { min: 900, max: 1350 },
+  curious: { min: 1100, max: 1800 },
+  confident: { min: 1000, max: 1650 },
+  determined: { min: 1000, max: 1700 },
+  hopeful: { min: 1100, max: 1850 },
+  proud: { min: 1000, max: 1650 },
+  vulnerable: { min: 1500, max: 2400 },
+  reflective: { min: 1500, max: 2400 },
+  sad: { min: 1500, max: 2350 },
+  calm: { min: 1300, max: 2200 },
+  intimate: { min: 1400, max: 2300 },
+  warm: { min: 1200, max: 2100 },
+  serious: { min: 1100, max: 1900 },
+  skeptical: { min: 1000, max: 1750 },
+  frustrated: { min: 900, max: 1450 },
+  neutral: { min: 1000, max: 1900 },
 };
 const RESERVE_MARGIN = 0.05;
 const PENALTY_PER_MISSING_UNIT = 0.05;
 const REUSE_SCORE_PENALTY = 0.06;
+const MOTIF_REUSE_SCORE_PENALTY = 0.04;
+const CONSECUTIVE_MOTIF_SCORE_PENALTY = 0.05;
+const CONSECUTIVE_SLOT_TYPE_SCORE_PENALTY = 0.03;
+const PREFERRED_CHUNK_SCORE_BOOST_PER_UNIT = 0.08;
+const PREFERRED_CHUNK_SCORE_BOOST_CAP = 0.24;
 const CLIP_REUSE_SPACING_MS = 150;
 const CLIP_REUSE_JITTER_STEP = 97;
 const DEFAULT_FPS = 30;
@@ -224,6 +249,7 @@ export async function processCutPlanGeneration(
       id: string;
       s3Key: string | null;
       durationMs: number;
+      aiTags: string[] | null;
       slotClip: {
         slotType: string;
       };
@@ -233,6 +259,7 @@ export async function processCutPlanGeneration(
         id: true,
         s3Key: true,
         durationMs: true,
+        aiTags: true,
         slotClip: {
           select: {
             slotType: true,
@@ -246,6 +273,7 @@ export async function processCutPlanGeneration(
       s3Key: row.s3Key,
       durationMs: row.durationMs,
       slotType: row.slotClip.slotType,
+      aiTags: row.aiTags,
     }));
 
     const usableBrollChunks = chunks.filter(
@@ -287,10 +315,16 @@ export async function processCutPlanGeneration(
     const arollBrollPolicy = resolveArollBrollPolicy(episode.template?.editingRecipe);
 
     await updateProgress(jobId, 'processing', 50, 'Aggregating candidates');
+    const creativeDecisionMap = creativeBrief
+      ? new Map<number, CreativeEditDecision>(
+          creativeBrief.map((decision) => [decision.segmentIndex, decision] as const)
+        )
+      : undefined;
 
     const windowCandidates = windows.map((window) =>
       buildWindowCandidates(window, units, chunkMap, {
         allowUnitsWithoutCandidates: isArollFirst,
+        creativeDecisionMap,
       })
     );
 
@@ -338,6 +372,33 @@ export async function processCutPlanGeneration(
       .filter((cut) => cut.chunkId !== AROLL_PREVIEW_CHUNK_ID)
       .reduce((sum, cut) => sum + cut.durationMs, 0);
     const brollCoverage = totalDurationMs > 0 ? brollDurationMs / totalDurationMs : 0;
+    const totalWindowDurationMs = windows.reduce(
+      (sum, window) => sum + (window.endMs - window.startMs),
+      0
+    );
+    const avgWindowDurationMs = windows.length > 0
+      ? Math.round(totalWindowDurationMs / windows.length)
+      : 0;
+    const brollChunkIds = cuts
+      .filter((cut) => cut.chunkId !== AROLL_PREVIEW_CHUNK_ID)
+      .map((cut) => cut.chunkId);
+    const uniqueBrollChunkCount = new Set(brollChunkIds).size;
+    const brollReuseRate = brollChunkIds.length > 0
+      ? (brollChunkIds.length - uniqueBrollChunkCount) / brollChunkIds.length
+      : 0;
+    const preferredChunkHintsUsed = creativeBrief
+      ? creativeBrief.filter((decision) => Boolean(decision.preferredChunkId)).length
+      : 0;
+    logger.info('[Phase 3.2] Cut plan observability', {
+      episodeId,
+      windowCount: windows.length,
+      avgWindowDurationMs,
+      brollCutCount,
+      uniqueBrollChunkCount,
+      brollReuseRate: Number(brollReuseRate.toFixed(3)),
+      preferredChunkHintsUsed,
+      usedCreativeBrief: Boolean(creativeBrief && creativeBrief.length > 0),
+    });
 
     const { aspectRatio, width, height, fps } = getRenderSettings(episode.template?.layoutSpec);
 
@@ -408,6 +469,9 @@ export async function processCutPlanGeneration(
           arollCutCount,
           brollCutCount,
           brollCoverage,
+          avgWindowDurationMs,
+          brollReuseRate: Number(brollReuseRate.toFixed(3)),
+          preferredChunkHintsUsed,
         },
       },
     });
@@ -451,33 +515,64 @@ export async function processCutPlanGeneration(
 
 // ==================== HELPERS ====================
 
-/**
- * Determine the max window duration for a unit based on its emotional tone
- * or the Creative Director's pacing intent.
- */
+function getDeterministicRatio(seed: number): number {
+  const value = (seed * 137 + 53) % 1000;
+  return value / 1000;
+}
+
+function clampCutDuration(durationMs: number): number {
+  return Math.max(MIN_CUT_DURATION_MS, Math.min(2500, durationMs));
+}
+
+function resolveWindowRangeForUnit(
+  unit: UnitRow,
+  creativeBrief: CreativeEditDecision[] | null,
+): { min: number; max: number } {
+  let range: { min: number; max: number } = {
+    min: MIN_CUT_DURATION_MS,
+    max: MAX_CUT_DURATION_MS,
+  };
+
+  if (creativeBrief) {
+    const decision = creativeBrief.find((d) => d.segmentIndex === unit.segmentIndex);
+    if (decision?.targetCutDurationMs) {
+      const target = clampCutDuration(decision.targetCutDurationMs);
+      range = {
+        min: Math.max(MIN_CUT_DURATION_MS, target - 250),
+        max: Math.min(2500, target + 250),
+      };
+    } else if (decision?.pacingIntent === 'rapid') {
+      range = { min: 700, max: 1250 };
+    } else if (decision?.pacingIntent === 'hold') {
+      range = { min: 1500, max: 2400 };
+    } else if (decision?.pacingIntent === 'medium') {
+      range = { min: 1000, max: 1850 };
+    }
+  }
+
+  if (unit.emotionalTone) {
+    const mapped = EMOTION_TO_WINDOW_RANGE_MS[unit.emotionalTone.toLowerCase()];
+    if (mapped) {
+      range = {
+        min: Math.max(range.min, mapped.min),
+        max: Math.min(range.max, mapped.max),
+      };
+    }
+  }
+
+  if (range.max < range.min) {
+    range.max = range.min;
+  }
+  return range;
+}
+
 function getMaxWindowForUnit(
   unit: UnitRow,
   creativeBrief: CreativeEditDecision[] | null,
 ): number {
-  // 1. If Creative Director specified a target duration, use it
-  if (creativeBrief) {
-    const decision = creativeBrief.find((d) => d.segmentIndex === unit.segmentIndex);
-    if (decision?.targetCutDurationMs) {
-      return decision.targetCutDurationMs;
-    }
-    // Use pacing intent as fallback
-    if (decision?.pacingIntent === 'rapid') return 1200;
-    if (decision?.pacingIntent === 'hold') return 2500;
-  }
-
-  // 2. Use emotionalTone if available
-  if (unit.emotionalTone) {
-    const mapped = EMOTION_TO_MAX_WINDOW_MS[unit.emotionalTone.toLowerCase()];
-    if (mapped) return mapped;
-  }
-
-  // 3. Default
-  return MAX_CUT_DURATION_MS;
+  const range = resolveWindowRangeForUnit(unit, creativeBrief);
+  const ratio = getDeterministicRatio(unit.segmentIndex);
+  return Math.round(range.min + ratio * (range.max - range.min));
 }
 
 function buildCutWindows(
@@ -522,15 +617,22 @@ function buildWindowCandidates(
   window: CutWindow,
   units: UnitRow[],
   chunkMap: Map<string, ChunkInfo>,
-  options?: { allowUnitsWithoutCandidates?: boolean }
+  options?: {
+    allowUnitsWithoutCandidates?: boolean;
+    creativeDecisionMap?: Map<number, CreativeEditDecision>;
+  }
 ): WindowCandidate[] {
   const unitCount = window.unitIndices.length;
-  const candidateScores = new Map<string, { sum: number; count: number }>();
+  const candidateScores = new Map<
+    string,
+    { sum: number; count: number; slotType: string; motifKey: string; preferredVotes: number }
+  >();
   const requiredDurationMs = window.endMs - window.startMs;
 
   for (const unitIndex of window.unitIndices) {
     const unit = units.find((u) => u.segmentIndex === unitIndex);
     if (!unit) continue;
+    const preferredChunkId = options?.creativeDecisionMap?.get(unit.segmentIndex)?.preferredChunkId;
     const candidates = extractCandidates(unit.metadata);
     if (candidates.length === 0 && !options?.allowUnitsWithoutCandidates) {
       throw new Error(`Unit ${unit.segmentIndex} has no candidates`);
@@ -540,9 +642,18 @@ function buildWindowCandidates(
       if (!chunkInfo?.s3Key || chunkInfo.durationMs < requiredDurationMs) {
         continue;
       }
-      const entry = candidateScores.get(candidate.chunkId) ?? { sum: 0, count: 0 };
+      const entry = candidateScores.get(candidate.chunkId) ?? {
+        sum: 0,
+        count: 0,
+        slotType: chunkInfo.slotType,
+        motifKey: getChunkMotifKey(chunkInfo),
+        preferredVotes: 0,
+      };
       entry.sum += candidate.totalScore;
       entry.count += 1;
+      if (preferredChunkId && preferredChunkId === candidate.chunkId) {
+        entry.preferredVotes += 1;
+      }
       candidateScores.set(candidate.chunkId, entry);
     }
   }
@@ -551,10 +662,16 @@ function buildWindowCandidates(
   for (const [chunkId, score] of candidateScores.entries()) {
     const missingUnits = unitCount - score.count;
     const averageScore = score.sum / unitCount;
-    const finalScore = averageScore - missingUnits * PENALTY_PER_MISSING_UNIT;
+    const preferenceBoost = Math.min(
+      PREFERRED_CHUNK_SCORE_BOOST_CAP,
+      score.preferredVotes * PREFERRED_CHUNK_SCORE_BOOST_PER_UNIT
+    );
+    const finalScore = averageScore - missingUnits * PENALTY_PER_MISSING_UNIT + preferenceBoost;
     windowCandidates.push({
       chunkId,
       score: finalScore,
+      slotType: score.slotType,
+      motifKey: score.motifKey,
     });
   }
 
@@ -568,6 +685,18 @@ function extractCandidates(metadata: unknown): Array<{ chunkId: string; totalSco
     chunkId: candidate.chunkId,
     totalScore: candidate.totalScore,
   }));
+}
+
+function getChunkMotifKey(chunk: ChunkInfo): string {
+  const tags = (chunk.aiTags ?? [])
+    .map((tag) => tag.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, ''))
+    .filter(Boolean);
+  if (tags.length === 0) {
+    return `slot:${chunk.slotType}`;
+  }
+
+  const topTags = Array.from(new Set(tags.slice(0, 3))).sort();
+  return `${chunk.slotType}:${topTags.join('|')}`;
 }
 
 function buildReservations(windowCandidates: WindowCandidate[][]): Map<string, number> {
@@ -590,16 +719,35 @@ function selectCandidate(
   reservedByChunk: Map<string, number>,
   usedChunks: Set<string>,
   usageByChunk: Map<string, number>,
+  usageByMotif: Map<string, number>,
   previousChunkId: string | null,
+  previousMotifKey: string | null,
+  previousSlotType: string | null,
   windowIndex: number
 ): WindowCandidate | null {
-  const scoreWithReusePenalty = (candidate: WindowCandidate): number => {
+  const scoreWithPenalty = (candidate: WindowCandidate): number => {
     const usageCount = usageByChunk.get(candidate.chunkId) ?? 0;
-    return candidate.score - usageCount * REUSE_SCORE_PENALTY;
+    const motifUsageCount = usageByMotif.get(candidate.motifKey) ?? 0;
+    const consecutiveMotifPenalty =
+      previousMotifKey && candidate.motifKey === previousMotifKey
+        ? CONSECUTIVE_MOTIF_SCORE_PENALTY
+        : 0;
+    const consecutiveSlotTypePenalty =
+      previousSlotType && candidate.slotType === previousSlotType
+        ? CONSECUTIVE_SLOT_TYPE_SCORE_PENALTY
+        : 0;
+
+    return (
+      candidate.score -
+      usageCount * REUSE_SCORE_PENALTY -
+      motifUsageCount * MOTIF_REUSE_SCORE_PENALTY -
+      consecutiveMotifPenalty -
+      consecutiveSlotTypePenalty
+    );
   };
 
   const pickFrom = (list: WindowCandidate[]) => {
-    const ranked = [...list].sort((a, b) => scoreWithReusePenalty(b) - scoreWithReusePenalty(a));
+    const ranked = [...list].sort((a, b) => scoreWithPenalty(b) - scoreWithPenalty(a));
 
     for (const candidate of ranked) {
       if (usedChunks.has(candidate.chunkId)) continue;
@@ -625,7 +773,7 @@ function selectCandidate(
   };
 
   const rankedReuse = [...candidates].sort(
-    (a, b) => scoreWithReusePenalty(b) - scoreWithReusePenalty(a)
+    (a, b) => scoreWithPenalty(b) - scoreWithPenalty(a)
   );
 
   return (
@@ -646,8 +794,11 @@ function buildBrollOnlyCuts(args: {
   const reservedByChunk = buildReservations(args.windowCandidates);
   const usedChunks = new Set<string>();
   const usageByChunk = new Map<string, number>();
+  const usageByMotif = new Map<string, number>();
   const consumedByChunkMs = new Map<string, number>();
   let previousChunkId: string | null = null;
+  let previousMotifKey: string | null = null;
+  let previousSlotType: string | null = null;
 
   return args.windows.map((window, index) => {
     const candidate = selectCandidate(
@@ -655,7 +806,10 @@ function buildBrollOnlyCuts(args: {
       reservedByChunk,
       usedChunks,
       usageByChunk,
+      usageByMotif,
       previousChunkId,
+      previousMotifKey,
+      previousSlotType,
       index
     );
 
@@ -686,8 +840,11 @@ function buildBrollOnlyCuts(args: {
 
     usedChunks.add(candidate.chunkId);
     usageByChunk.set(candidate.chunkId, usageCount + 1);
+    usageByMotif.set(candidate.motifKey, (usageByMotif.get(candidate.motifKey) ?? 0) + 1);
     consumedByChunkMs.set(candidate.chunkId, clipEndMs);
     previousChunkId = candidate.chunkId;
+    previousMotifKey = candidate.motifKey;
+    previousSlotType = candidate.slotType;
 
     return {
       cutIndex: index,
@@ -726,8 +883,11 @@ function buildArollFirstCuts(args: {
   const reservedByChunk = buildReservations(brollCandidatesByWindow);
   const usedChunks = new Set<string>();
   const usageByChunk = new Map<string, number>();
+  const usageByMotif = new Map<string, number>();
   const consumedByChunkMs = new Map<string, number>();
   let previousBrollChunkId: string | null = null;
+  let previousBrollMotifKey: string | null = null;
+  let previousBrollSlotType: string | null = null;
 
   return args.windows.map((window, index) => {
     const durationMs = window.endMs - window.startMs;
@@ -739,7 +899,10 @@ function buildArollFirstCuts(args: {
         reservedByChunk,
         usedChunks,
         usageByChunk,
+        usageByMotif,
         previousBrollChunkId,
+        previousBrollMotifKey,
+        previousBrollSlotType,
         index
       );
 
@@ -766,8 +929,11 @@ function buildArollFirstCuts(args: {
 
         usedChunks.add(candidate.chunkId);
         usageByChunk.set(candidate.chunkId, usageCount + 1);
+        usageByMotif.set(candidate.motifKey, (usageByMotif.get(candidate.motifKey) ?? 0) + 1);
         consumedByChunkMs.set(candidate.chunkId, clipEndMs);
         previousBrollChunkId = candidate.chunkId;
+        previousBrollMotifKey = candidate.motifKey;
+        previousBrollSlotType = candidate.slotType;
 
         return {
           cutIndex: index,

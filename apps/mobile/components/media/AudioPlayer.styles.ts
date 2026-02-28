@@ -1,0 +1,195 @@
+import { StyleSheet } from 'react-native';
+import { borderRadius, colors, shadows, spacing, typography } from '@/lib/theme';
+
+export const styles = StyleSheet.create({
+  container: {
+    borderRadius: borderRadius.xl,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    padding: spacing.md,
+    gap: spacing.sm,
+    ...shadows.md,
+  },
+  topRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  playButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.panel,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  titleWrap: {
+    flex: 1,
+  },
+  titleText: {
+    color: colors.text.DEFAULT,
+    fontFamily: typography.fontFamily.body,
+    fontSize: typography.fontSize.base,
+    fontWeight: typography.fontWeight.semibold,
+  },
+  metaText: {
+    marginTop: 2,
+    color: colors.text.muted,
+    fontFamily: typography.fontFamily.mono,
+    fontSize: typography.fontSize.xs,
+  },
+  utilityButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  waveRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: spacing.sm,
+    minHeight: 24,
+  },
+  waveBar: {
+    width: 6,
+    height: 18,
+    borderRadius: borderRadius.full,
+    backgroundColor: colors.primary.DEFAULT,
+  },
+  progressContainer: {
+    paddingVertical: spacing.xs,
+  },
+  progressTrack: {
+    width: '100%',
+    height: 8,
+    borderRadius: borderRadius.full,
+    backgroundColor: colors.panel,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: borderRadius.full,
+    backgroundColor: colors.primary.DEFAULT,
+  },
+  controlsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+  },
+  controlChip: {
+    minHeight: 34,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.panel,
+    paddingHorizontal: spacing.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+  },
+  controlLabel: {
+    color: colors.text.DEFAULT,
+    fontFamily: typography.fontFamily.mono,
+    fontSize: typography.fontSize.xs,
+    fontWeight: typography.fontWeight.semibold,
+  },
+  menuWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
+  menuChip: {
+    minHeight: 28,
+    borderRadius: borderRadius.full,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: spacing.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  menuChipActive: {
+    borderColor: colors.primary.DEFAULT,
+    backgroundColor: '#153342',
+  },
+  menuChipText: {
+    color: colors.text.DEFAULT,
+    fontFamily: typography.fontFamily.mono,
+    fontSize: typography.fontSize.xs,
+    fontWeight: typography.fontWeight.medium,
+  },
+  menuChipTextActive: {
+    color: colors.primary.DEFAULT,
+    fontWeight: typography.fontWeight.bold,
+  },
+  transcriptSection: {
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingTop: spacing.sm,
+    gap: spacing.xs,
+  },
+  transcriptTitle: {
+    color: colors.text.DEFAULT,
+    fontFamily: typography.fontFamily.body,
+    fontSize: typography.fontSize.sm,
+    fontWeight: typography.fontWeight.bold,
+  },
+  transcriptScroll: {
+    maxHeight: 140,
+  },
+  transcriptContent: {
+    paddingBottom: spacing.xs,
+  },
+  wordsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
+  wordChip: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: borderRadius.sm,
+    backgroundColor: colors.panel,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  wordChipDiverged: {
+    borderColor: '#8A4141',
+    backgroundColor: '#2B1717',
+  },
+  wordChipActive: {
+    borderColor: colors.primary.DEFAULT,
+    backgroundColor: '#123445',
+  },
+  wordText: {
+    color: colors.text.DEFAULT,
+    fontFamily: typography.fontFamily.body,
+    fontSize: typography.fontSize.xs,
+    fontWeight: typography.fontWeight.medium,
+  },
+  wordTextDiverged: {
+    color: '#F2A8A8',
+  },
+  wordTextActive: {
+    color: colors.primary.DEFAULT,
+  },
+  errorTitle: {
+    color: colors.error,
+    fontFamily: typography.fontFamily.body,
+    fontSize: typography.fontSize.sm,
+    fontWeight: typography.fontWeight.bold,
+  },
+  errorBody: {
+    color: colors.text.muted,
+    fontFamily: typography.fontFamily.body,
+    fontSize: typography.fontSize.sm,
+  },
+});

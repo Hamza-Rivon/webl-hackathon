@@ -50,8 +50,29 @@ export const config = {
 
   // AI Services
   ai: {
+    provider: (process.env.AI_PROVIDER || 'gemini').toLowerCase() as
+      | 'gemini'
+      | 'openai'
+      | 'runpod'
+      | 'mistral',
     geminiApiKey: process.env.GEMINI_API_KEY || '',
     elevenLabsApiKey: process.env.ELEVENLABS_API_KEY || '',
+  },
+
+  // Runpod/vLLM (OpenAI-compatible, used when AI_PROVIDER=runpod)
+  vllm: {
+    baseUrl: (process.env.VLLM_BASE_URL || '').replace(/\/+$/, ''),
+    model: process.env.VLLM_MODEL || 'Qwen/Qwen3-VL-32B-Instruct',
+    apiKey: process.env.VLLM_API_KEY || '',
+  },
+
+  // AWS Bedrock (for Mistral LLM when AI_PROVIDER=mistral)
+  bedrock: {
+    region: process.env.AWS_BEDROCK_REGION || process.env.AWS_REGION || 'us-west-2',
+    bearerToken: process.env.AWS_BEARER_TOKEN_BEDROCK || '',
+    accessKeyId: process.env.AWS_BEDROCK_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID || '',
+    secretAccessKey: process.env.AWS_BEDROCK_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY || '',
+    mistralModel: process.env.AWS_BEDROCK_MISTRAL_MODEL || 'mistral.magistral-small-2509',
   },
 
   // Mux Video (new)

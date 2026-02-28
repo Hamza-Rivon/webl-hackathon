@@ -1,9 +1,16 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import OpenAI from 'openai';
 import { supportsOpenAiTemperature } from './openaiModelSupport.js';
+import { callBedrockMistralChat } from './bedrockMistral.js';
 import { config } from '../config.js';
 import { logger as sharedLogger } from '@webl/shared';
 import { usageService } from './usage.js';
+import {
+  type AiProvider,
+  getOpenAiCompatibleClient,
+  getOpenAiCompatibleModel,
+  getProviderLogContext,
+  isProviderConfigured,
+} from './llmProvider.js';
 
 export interface WordTimestamp {
   word: string;
@@ -34,7 +41,7 @@ export interface VoiceoverRemovalVerificationDecision {
 
 export interface VoiceoverRemovalVerificationSummary {
   enabled: boolean;
-  provider?: 'gemini' | 'openai';
+  provider?: 'gemini' | 'openai' | 'runpod' | 'mistral';
   candidates: number;
   verified: number;
   rescued: number;
@@ -166,10 +173,9 @@ async function callVerificationLlm(
   candidates: Candidate[],
   logger = sharedLogger
 ): Promise<VoiceoverRemovalVerificationDecision[]> {
-  const provider = config.ai.provider;
+  const provider = config.ai.provider as AiProvider;
 
-  if (provider === 'gemini' && !config.ai.geminiApiKey) return [];
-  if (provider === 'openai' && !config.openai.apiKey) return [];
+  if (!isProviderConfigured(provider)) return [];
   if (candidates.length === 0) return [];
 
   const prompt = `You are verifying whether short audio gaps marked for removal are actually part of the script.
@@ -207,6 +213,20 @@ Rules:
 - If you pick "remove", only do so when you're confident it is truly off-script/filler (confidence 0.7+)`;
 
   try {
+    if (provider === 'mistral') {
+      await usageService.recordUsage(userId, {
+        openAiChatCalls: 1,
+        voiceoverEditVerificationCalls: 1,
+      });
+      const text = await callBedrockMistralChat({
+        systemPrompt: 'You verify transcript-vs-script alignment decisions. Return JSON only.',
+        userPrompt: prompt,
+        temperature: 0.2,
+      });
+      const parsed = parseAIJsonResponse<{ decisions?: VoiceoverRemovalVerificationDecision[] }>(text);
+      return Array.isArray(parsed.decisions) ? parsed.decisions : [];
+    }
+
     if (provider === 'gemini') {
       const genAI = new GoogleGenerativeAI(config.ai.geminiApiKey);
       const model = genAI.getGenerativeModel({
@@ -223,14 +243,21 @@ Rules:
       return Array.isArray(parsed.decisions) ? parsed.decisions : [];
     }
 
-    const client = new OpenAI({ apiKey: config.openai.apiKey });
+    const client = getOpenAiCompatibleClient(provider);
+    const model = getOpenAiCompatibleModel(config.voiceover.models.call3, provider);
+    if (provider === 'runpod') {
+      logger.info('[Runpod][removal-verification] request', {
+        ...getProviderLogContext(provider),
+        candidateCount: candidates.length,
+      });
+    }
     await usageService.recordUsage(userId, {
       openAiChatCalls: 1,
       voiceoverEditVerificationCalls: 1,
     });
-    const temperature = supportsOpenAiTemperature(config.voiceover.models.call3, null) ? 0.2 : undefined;
+    const temperature = supportsOpenAiTemperature(model, null) ? 0.2 : undefined;
     const response = await client.chat.completions.create({
-      model: config.voiceover.models.call3,
+      model,
       response_format: { type: 'json_object' },
       messages: [
         {
@@ -243,6 +270,12 @@ Rules:
     });
     const content = response.choices[0]?.message?.content ?? '{}';
     const parsed = parseAIJsonResponse<{ decisions?: VoiceoverRemovalVerificationDecision[] }>(content);
+    if (provider === 'runpod') {
+      logger.info('[Runpod][removal-verification] response', {
+        ...getProviderLogContext(provider),
+        decisionCount: Array.isArray(parsed.decisions) ? parsed.decisions.length : 0,
+      });
+    }
     return Array.isArray(parsed.decisions) ? parsed.decisions : [];
   } catch (error) {
     logger.error('Voiceover removal verification LLM call failed', error);

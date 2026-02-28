@@ -1,0 +1,222 @@
+{
+  "version": "5.0.0",
+  "templates": [
+    {
+      "id": "aroll-clean-then-broll",
+      "name": "A-Roll Clean Then B-Roll",
+      "description": "Record one continuous A-roll take with camera + mic first. The existing voiceover cleaning pipeline processes extracted audio, then you can add optional B-roll after cleanup.",
+      "platform": "all",
+      "language": "en",
+      "durationTarget": 60,
+      "editingRecipe": "aroll-clean-then-broll.json",
+      "canonicalScript": "Record your full talking-head take in one pass while reading your script. After audio cleanup, add optional B-roll clips for visual alternation.",
+      "scriptStructure": {
+        "beats": [
+          {
+            "type": "main",
+            "duration": 60,
+            "description": "Continuous A-roll primary narrative with optional B-roll overlays."
+          }
+        ],
+        "totalDuration": 60
+      },
+      "slotRequirements": {
+        "workflow": "aroll_clean_then_broll",
+        "slots": [
+          {
+            "slotId": "A1",
+            "slotType": "a_roll_face",
+            "priority": "required",
+            "description": "Primary A-roll camera take (includes source audio)",
+            "duration": { "min": 20, "target": 60, "max": 180 }
+          },
+          {
+            "slotId": "B1",
+            "slotType": "b_roll_illustration",
+            "priority": "required",
+            "description": "Required supporting B-roll (available after A-roll audio is cleaned)",
+            "duration": { "min": 3, "target": 30, "max": 60 }
+          },
+          {
+            "slotId": "B2",
+            "slotType": "b_roll_illustration",
+            "priority": "optional",
+            "description": "Optional extra B-roll for variety",
+            "duration": { "min": 3, "target": 20, "max": 60 }
+          }
+        ]
+      },
+      "personaTags": ["aroll-first", "facecam", "clean-audio", "optional-broll"],
+      "niche": "general",
+      "tone": "conversational"
+    },
+    {
+      "id": "pure-broll-60s",
+      "name": "Pure B-Roll 60s",
+      "description": "Maximum flexibility. Upload B-roll clips and record your voiceover. Visuals are matched per voiceover unit and the final length matches the cleaned narration.",
+      "platform": "all",
+      "language": "en",
+      "durationTarget": 60,
+      "editingRecipe": "pure-broll-60s.json",
+      "canonicalScript": "Record your voiceover naturally. The system will match B-roll to your narration for a seamless video.",
+      "scriptStructure": {
+        "beats": [
+          {
+            "type": "flexible",
+            "duration": 60,
+            "description": "Pure B-roll with minimal structure."
+          }
+        ],
+        "totalDuration": 60
+      },
+      "slotRequirements": {
+        "slots": [
+          {
+            "slotId": "B1",
+            "slotType": "b_roll_illustration",
+            "priority": "required",
+            "description": "Main B-roll footage",
+            "duration": { "min": 2, "target": 30, "max": 60 }
+          },
+          {
+            "slotId": "B2",
+            "slotType": "b_roll_illustration",
+            "priority": "optional",
+            "description": "Additional B-roll for variety",
+            "duration": { "min": 2, "target": 20, "max": 60 }
+          },
+          {
+            "slotId": "B3",
+            "slotType": "b_roll_illustration",
+            "priority": "optional",
+            "description": "More B-roll for diversity",
+            "duration": { "min": 2, "target": 20, "max": 60 }
+          },
+          {
+            "slotId": "B4",
+            "slotType": "b_roll_illustration",
+            "priority": "optional",
+            "description": "Extra B-roll footage",
+            "duration": { "min": 2, "target": 15, "max": 60 }
+          },
+          {
+            "slotId": "B5",
+            "slotType": "b_roll_illustration",
+            "priority": "optional",
+            "description": "Extra B-roll footage",
+            "duration": { "min": 2, "target": 15, "max": 60 }
+          }
+        ]
+      },
+      "personaTags": ["simple", "flexible", "beginner", "pure-broll", "easy", "no-complexity"],
+      "niche": "general",
+      "tone": "flexible"
+    },
+    {
+      "id": "prop-analogy-60s",
+      "name": "Prop Analogy (60s)",
+      "description": "Uses a physical object or analogy to explain an abstract concept. Bold hook, 3-mistake pivot, solution payoff. Optimized for educational/advice content.",
+      "platform": "all",
+      "language": "en",
+      "durationTarget": 60,
+      "editingRecipe": "prop-analogy-60s.json",
+      "defaultArchetype": "prop_analogy",
+      "canonicalScript": "Why consistency failed you explained in 60 seconds. You heard it a thousand times. Post daily. Push through. And you listened. So why are you still stuck under 1,000 views? Consistency didn't fail because it doesn't work. It failed because you made one of three mistakes.",
+      "scriptStructure": {
+        "beats": [
+          { "type": "hook", "duration": 3, "description": "Bold claim about why the viewer is failing." },
+          { "type": "setup", "duration": 5, "description": "Quote the generic advice everyone gives." },
+          { "type": "pain_point", "duration": 4, "description": "Ask why they still have the negative result." },
+          { "type": "pivot", "duration": 3, "description": "Pivot to three mistakes." },
+          { "type": "mistake_1", "duration": 6, "description": "Name the big mistake (teaser)." },
+          { "type": "mistake_2", "duration": 8, "description": "Explain a misconception about the process." },
+          { "type": "mistake_3", "duration": 8, "description": "The technical reason for failure." },
+          { "type": "solution", "duration": 10, "description": "Explain the correct way." },
+          { "type": "social_proof", "duration": 7, "description": "Share specific results." },
+          { "type": "cta", "duration": 5, "description": "One clear call to action." }
+        ],
+        "totalDuration": 60
+      },
+      "slotRequirements": {
+        "workflow": "aroll_clean_then_broll",
+        "slots": [
+          {
+            "slotId": "A1",
+            "slotType": "a_roll_face",
+            "priority": "required",
+            "description": "Primary A-roll camera take (includes source audio)",
+            "duration": { "min": 20, "target": 60, "max": 180 }
+          },
+          {
+            "slotId": "B1",
+            "slotType": "b_roll_illustration",
+            "priority": "required",
+            "description": "Supporting B-roll illustrating the analogy/concept",
+            "duration": { "min": 3, "target": 30, "max": 60 }
+          },
+          {
+            "slotId": "B2",
+            "slotType": "b_roll_illustration",
+            "priority": "optional",
+            "description": "Optional extra B-roll for variety",
+            "duration": { "min": 3, "target": 20, "max": 60 }
+          }
+        ]
+      },
+      "personaTags": ["aroll-first", "educational", "analogy", "advice", "prop"],
+      "niche": "general",
+      "tone": "confident"
+    },
+    {
+      "id": "vulnerable-storyteller-60s",
+      "name": "Vulnerable Storyteller (60s)",
+      "description": "Intimate, older-sibling tone. Acknowledges a real struggle, shares a personal story, then reframes with a mindset shift. Heavy B-roll during the vulnerable middle section.",
+      "platform": "all",
+      "language": "en",
+      "durationTarget": 60,
+      "editingRecipe": "vulnerable-storyteller-60s.json",
+      "defaultArchetype": "vulnerable_storyteller",
+      "canonicalScript": "If walking into the weight room feels impossible right now, this is for you. We convince ourselves the fear is about people judging our form. But that's not it. The real fear is taking up space in a room full of people who look like they belong there.",
+      "scriptStructure": {
+        "beats": [
+          { "type": "filter", "duration": 5, "description": "Qualify the audience: If [action] feels impossible, this is for you." },
+          { "type": "reframing", "duration": 10, "description": "Acknowledge surface fear, then dismiss it." },
+          { "type": "shadow", "duration": 15, "description": "Describe exact behavior of someone stuck. Be vulnerable." },
+          { "type": "realization", "duration": 15, "description": "The mindset shift. A truth about human nature." },
+          { "type": "permission", "duration": 10, "description": "Give permission to be messy. Warm encouragement." },
+          { "type": "signoff", "duration": 5, "description": "Short warm closing." }
+        ],
+        "totalDuration": 60
+      },
+      "slotRequirements": {
+        "workflow": "aroll_clean_then_broll",
+        "slots": [
+          {
+            "slotId": "A1",
+            "slotType": "a_roll_face",
+            "priority": "required",
+            "description": "Intimate A-roll camera take (quiet confidence, close up)",
+            "duration": { "min": 20, "target": 60, "max": 180 }
+          },
+          {
+            "slotId": "B1",
+            "slotType": "b_roll_illustration",
+            "priority": "required",
+            "description": "Moody B-roll showing the emotion of the struggle (not stock footage)",
+            "duration": { "min": 5, "target": 30, "max": 60 }
+          },
+          {
+            "slotId": "B2",
+            "slotType": "b_roll_illustration",
+            "priority": "optional",
+            "description": "Additional mood B-roll for the shadow/struggle section",
+            "duration": { "min": 3, "target": 20, "max": 60 }
+          }
+        ]
+      },
+      "personaTags": ["aroll-first", "storytelling", "vulnerable", "personal", "intimate"],
+      "niche": "general",
+      "tone": "intimate"
+    }
+  ]
+}

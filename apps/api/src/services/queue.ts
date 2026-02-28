@@ -265,6 +265,24 @@ export const queueService = {
     }
   },
 
+  /**
+   * Add a voiceover segmentation job to the queue (Phase 1.6)
+   * Used by recovery flows when segmentation previously failed.
+   */
+  async addVoiceoverSegmentationJob(data: VoiceoverSegmentationJobData): Promise<string> {
+    try {
+      const job = await queues.voiceoverSegmentation.add('voiceover-segmentation', data, {
+        jobId: data.jobId,
+        priority: PRIORITIES.HIGH,
+      });
+      logger.info(`Queued voiceover_segmentation job ${data.jobId} for episode ${data.episodeId}`);
+      return job.id ?? data.jobId;
+    } catch (error) {
+      logger.error(`Failed to queue voiceover segmentation job ${data.jobId} to Redis:`, error);
+      return data.jobId;
+    }
+  },
+
   // ==================== PHASE 2: B-ROLL CHUNK PIPELINE ====================
 
   /**

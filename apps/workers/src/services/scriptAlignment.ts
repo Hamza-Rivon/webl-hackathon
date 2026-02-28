@@ -6,11 +6,18 @@
  */
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import OpenAI from 'openai';
 import { supportsOpenAiTemperature } from './openaiModelSupport.js';
+import { callBedrockMistralChat } from './bedrockMistral.js';
 import { config } from '../config.js';
 import { logger as sharedLogger } from '@webl/shared';
 import { usageService } from './usage.js';
+import {
+  type AiProvider,
+  getOpenAiCompatibleClient,
+  getOpenAiCompatibleModel,
+  getProviderLogContext,
+  isProviderConfigured,
+} from './llmProvider.js';
 
 export interface WordTimestamp {
   word: string;
@@ -363,12 +370,9 @@ async function callAlignmentLlm(
   repeatedGroups: RepeatedSegmentGroup[],
   logger = sharedLogger
 ): Promise<LlmMatch[]> {
-  const provider = config.ai.provider;
+  const provider = config.ai.provider as AiProvider;
 
-  if (provider === 'gemini' && !config.ai.geminiApiKey) {
-    return [];
-  }
-  if (provider === 'openai' && !config.openai.apiKey) {
+  if (!isProviderConfigured(provider)) {
     return [];
   }
 
@@ -452,6 +456,23 @@ Rules:
 - Provide a brief reason for your choice`;
 
   try {
+    if (provider === 'mistral') {
+      await usageService.recordUsage(userId, {
+        openAiChatCalls: 1,
+        scriptAlignmentLlmCalls: 1,
+      });
+      const text = await callBedrockMistralChat({
+        systemPrompt: 'You are an expert at aligning scripts to transcripts. Return JSON only.',
+        userPrompt: prompt,
+        temperature: 0.3,
+      });
+      const parsed = parseAIJsonResponse<{ matches: LlmMatch[] }>(text);
+      logger.info(
+        `LLM alignment returned ${parsed.matches?.length || 0} matches for ${sentences.length} sentences`
+      );
+      return parsed.matches || [];
+    }
+
     if (provider === 'gemini') {
       const genAI = new GoogleGenerativeAI(config.ai.geminiApiKey);
       const model = genAI.getGenerativeModel({
@@ -471,14 +492,18 @@ Rules:
       return parsed.matches || [];
     }
 
-    const client = new OpenAI({ apiKey: config.openai.apiKey });
+    const client = getOpenAiCompatibleClient(provider);
+    const model = getOpenAiCompatibleModel(config.voiceover.models.call2, provider);
+    if (provider === 'runpod') {
+      logger.info('[Runpod][script-alignment] request', getProviderLogContext(provider));
+    }
     await usageService.recordUsage(userId, {
       openAiChatCalls: 1,
       scriptAlignmentLlmCalls: 1,
     });
-    const temperature = supportsOpenAiTemperature(config.voiceover.models.call2, null) ? 0.3 : undefined;
+    const temperature = supportsOpenAiTemperature(model, null) ? 0.3 : undefined;
     const response = await client.chat.completions.create({
-      model: config.voiceover.models.call2,
+      model,
       response_format: { type: 'json_object' },
       messages: [
         {
@@ -491,6 +516,12 @@ Rules:
     });
     const content = response.choices[0]?.message?.content ?? '{}';
     const parsed = parseAIJsonResponse<{ matches: LlmMatch[] }>(content);
+    if (provider === 'runpod') {
+      logger.info('[Runpod][script-alignment] response', {
+        ...getProviderLogContext(provider),
+        matchCount: parsed.matches?.length ?? 0,
+      });
+    }
     logger.info(
       `LLM alignment returned ${parsed.matches?.length || 0} matches for ${sentences.length} sentences`
     );
@@ -583,7 +614,11 @@ export async function findScriptAlignedSegments(
 
   const hasGemini = config.ai.provider === 'gemini' && !!config.ai.geminiApiKey;
   const hasOpenai = config.ai.provider === 'openai' && !!config.openai.apiKey;
-  const canUseLlm = hasGemini || hasOpenai;
+  const hasRunpod = config.ai.provider === 'runpod' && !!config.vllm.baseUrl;
+  const hasMistral =
+    config.ai.provider === 'mistral' &&
+    !!(config.bedrock.bearerToken || (config.bedrock.accessKeyId && config.bedrock.secretAccessKey));
+  const canUseLlm = hasGemini || hasOpenai || hasRunpod || hasMistral;
 
   const shouldUseLlm =
     canUseLlm &&

@@ -1,0 +1,20 @@
+{
+  "cutRhythm": "variable",
+  "captionStyle": "bold",
+  "musicType": "none",
+  "transitions": ["cut"],
+  "timelinePolicy": {
+    "mode": "aroll_broll_alternating",
+    "startWith": "a_roll",
+    "targetBrollCoverage": 0.38,
+    "aroll": {
+      "minBlockMs": 900,
+      "maxBlockMs": 2200
+    },
+    "broll": {
+      "minBlockMs": 500,
+      "maxBlockMs": 1700
+    },
+    "maxConsecutiveBrollBlocks": 1
+  }
+}

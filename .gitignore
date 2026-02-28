@@ -316,6 +316,9 @@ nanobana-illustration/
 # Internal docs (migration plans, agent findings, runpod)
 docs/
 
+# Overview files (internal, not pushed)
+**/OVERVIEW.md
+
 # ==================== PROJECT SPECIFIC ====================
 # Admin dashboard (internal, not pushed to repo)
 apps/admin-dashboard/
@@ -350,6 +353,11 @@ webhook-server.js
 deploy.sh
 logs/
 
+# Scripts (local/dev, not pushed)
+scripts/
+
 .env-aws
 .env*
 .env.aws
+env.example
+apps/scripts/

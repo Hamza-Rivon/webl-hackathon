@@ -66,6 +66,8 @@ Rules:
 - Keywords must be grounded in the transcript/script (no hallucinated nouns).
 - Avoid filler or stopwords (e.g. "the", "and", "to", "for", "with", pronouns).
 - Prefer concrete nouns, places, brands, and actions.
+- Each unit MUST have at least 3 keywords (3-5 total). Never return fewer than 3.
+- If a unit is vague, still output 3 grounded keywords from the spoken words/context (e.g., speech, narration, topic noun).
 - We build embedding text deterministically in code (context window), so do NOT output embedding text.
 
 Script (optional context):

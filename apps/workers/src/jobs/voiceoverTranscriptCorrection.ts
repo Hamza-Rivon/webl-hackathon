@@ -125,7 +125,9 @@ export async function processVoiceoverTranscriptCorrection(
     const provider = config.ai.provider;
     if (stats.llmCallCount > 0) {
       await usageService.recordUsage(userId, {
-        ...(provider === 'openai' ? { openAiChatCalls: stats.llmCallCount } : {}),
+        ...(provider === 'openai' || provider === 'runpod'
+          ? { openAiChatCalls: stats.llmCallCount }
+          : {}),
         ...(provider === 'gemini' ? { geminiCalls: stats.llmCallCount } : {}),
         transcriptCorrectionCalls: 1,
       });

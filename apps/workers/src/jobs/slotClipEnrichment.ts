@@ -11,7 +11,10 @@ import { progressPublisher } from '../services/progress.js';
 import { queues } from '../queue.js';
 import { logger } from '@webl/shared';
 import { usageService } from '../services/usage.js';
+import { config } from '../config.js';
 import { workflows } from '@mux/ai';
+import { s3Service } from '../services/s3.js';
+import { analyzeVideoWithRunpod } from '../services/runpodVideoAnalysis.js';
 
 interface SlotClipEnrichmentJobData {
   jobId: string;
@@ -33,6 +36,22 @@ const MODERATION_THRESHOLDS = {
   harassment: 0.7,
   selfHarm: 0.8,
 };
+
+function exceedsModerationThreshold(maxScores: {
+  sexual?: number;
+  violence?: number;
+  hate?: number;
+  harassment?: number;
+  selfHarm?: number;
+}): boolean {
+  return (
+    (maxScores.violence ?? 0) > MODERATION_THRESHOLDS.violence ||
+    (maxScores.sexual ?? 0) > MODERATION_THRESHOLDS.sexual ||
+    (maxScores.hate ?? 0) > MODERATION_THRESHOLDS.hate ||
+    (maxScores.harassment ?? 0) > MODERATION_THRESHOLDS.harassment ||
+    (maxScores.selfHarm ?? 0) > MODERATION_THRESHOLDS.selfHarm
+  );
+}
 
 export async function processSlotClipEnrichment(
   bullJob: Job<SlotClipEnrichmentJobData>
@@ -65,6 +84,7 @@ export async function processSlotClipEnrichment(
       where: { id: slotClipId },
       select: {
         slotType: true,
+        s3Key: true,
         episode: {
           select: {
             template: {
@@ -99,36 +119,87 @@ export async function processSlotClipEnrichment(
       return;
     }
 
-    // Step 2: Get AI summary and tags (10-50%)
-    await updateProgress(jobId, 'analyzing', 10, 'Analyzing slot clip with @mux/ai');
+    const useRunpod = config.ai.provider === 'runpod';
 
-    await usageService.recordUsage(userId, {
-      muxAiSummaryCalls: 1,
-    });
-    const aiResult = await workflows.getSummaryAndTags(muxAssetId, {
-      provider: 'openai',
-      tone: 'neutral',
-      includeTranscript: isARoll, // ✅ Include transcript for A-roll slots (Mux auto-generates subtitles)
-    });
+    // Step 2: Get AI summary + moderation
+    await updateProgress(
+      jobId,
+      'analyzing',
+      10,
+      useRunpod ? 'Analyzing slot clip with Runpod Qwen3-VL' : 'Analyzing slot clip with @mux/ai'
+    );
+
+    let aiResult: { tags: string[]; description: string };
+    let moderationResult: {
+      maxScores: {
+        sexual: number;
+        violence: number;
+        hate?: number;
+        harassment?: number;
+        selfHarm?: number;
+      };
+      exceedsThreshold: boolean;
+    };
+
+    if (useRunpod) {
+      if (!slotClip?.s3Key) {
+        throw new Error(`Slot clip ${slotClipId} is missing s3Key for Runpod analysis`);
+      }
+
+      const signedUrl = await s3Service.getSignedDownloadUrl(slotClip.s3Key, 7200);
+      logger.info('[Runpod][slot-clip-enrichment] request', {
+        model: config.vllm.model,
+        endpointHost: (() => {
+          try {
+            return new URL(config.vllm.baseUrl).host;
+          } catch {
+            return config.vllm.baseUrl || null;
+          }
+        })(),
+        slotClipId,
+      });
+      await usageService.recordUsage(userId, { openAiChatCalls: 1 });
+
+      const runpodResult = await analyzeVideoWithRunpod({ videoUrl: signedUrl });
+      aiResult = {
+        tags: runpodResult.tags,
+        description: runpodResult.description,
+      };
+      moderationResult = {
+        maxScores: runpodResult.moderationScores,
+        exceedsThreshold: exceedsModerationThreshold(runpodResult.moderationScores),
+      };
+    } else {
+      await usageService.recordUsage(userId, {
+        muxAiSummaryCalls: 1,
+      });
+      const summaryResult = await workflows.getSummaryAndTags(muxAssetId, {
+        provider: 'openai',
+        tone: 'neutral',
+        includeTranscript: isARoll, // ✅ Include transcript for A-roll slots (Mux auto-generates subtitles)
+      });
+
+      await usageService.recordUsage(userId, {
+        muxAiModerationCalls: 1,
+      });
+      const moderation = await workflows.getModerationScores(muxAssetId, {
+        provider: 'openai',
+      });
+
+      aiResult = {
+        tags: summaryResult.tags,
+        description: summaryResult.description,
+      };
+      moderationResult = {
+        maxScores: moderation.maxScores,
+        exceedsThreshold: moderation.exceedsThreshold,
+      };
+    }
 
     logger.info(`Received AI analysis for slot clip:`, {
+      provider: useRunpod ? 'runpod' : 'mux',
       tags: aiResult.tags,
       description: aiResult.description,
-    });
-
-    await updateProgress(jobId, 'analyzing', 50, 'AI analysis complete');
-
-    // Step 3: Get moderation scores (50-80%)
-    await updateProgress(jobId, 'analyzing', 50, 'Running content moderation');
-
-    await usageService.recordUsage(userId, {
-      muxAiModerationCalls: 1,
-    });
-    const moderationResult = await workflows.getModerationScores(muxAssetId, {
-      provider: 'openai',
-    });
-
-    logger.info(`Received moderation scores:`, {
       maxScores: moderationResult.maxScores,
       exceedsThreshold: moderationResult.exceedsThreshold,
     });
@@ -141,8 +212,7 @@ export async function processSlotClipEnrichment(
 
     if (
       moderationResult.exceedsThreshold ||
-      maxScores.violence > MODERATION_THRESHOLDS.violence ||
-      maxScores.sexual > MODERATION_THRESHOLDS.sexual
+      exceedsModerationThreshold(maxScores)
     ) {
       moderationStatus = 'review';
       logger.warn(`Slot clip ${slotClipId} flagged for review`, { maxScores });

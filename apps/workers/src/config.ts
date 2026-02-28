@@ -55,7 +55,11 @@ export const config = {
 
   // AI Services - Only ONE provider is used at a time based on AI_PROVIDER env var
   ai: {
-    provider: (process.env.AI_PROVIDER || 'gemini').toLowerCase() as 'gemini' | 'openai',
+    provider: (process.env.AI_PROVIDER || 'gemini').toLowerCase() as
+      | 'gemini'
+      | 'openai'
+      | 'runpod'
+      | 'mistral',
     geminiApiKey: process.env.GEMINI_API_KEY || '',
     geminiModel: process.env.GEMINI_MODEL || 'gemini-3-pro-preview',
   },
@@ -64,6 +68,31 @@ export const config = {
   openai: {
     apiKey: process.env.OPENAI_API_KEY || '',
     model: process.env.OPENAI_MODEL || 'gpt-5-mini',
+  },
+
+  // Runpod/vLLM (OpenAI-compatible, used when AI_PROVIDER=runpod)
+  vllm: {
+    baseUrl: (process.env.VLLM_BASE_URL || '').replace(/\/+$/, ''),
+    model: process.env.VLLM_MODEL || 'Qwen/Qwen3-VL-32B-Instruct',
+    apiKey: process.env.VLLM_API_KEY || '',
+  },
+
+  // Transcription provider selection: 'deepgram' | 'voxtral' (default: 'voxtral')
+  transcription: {
+    provider: (process.env.TRANSCRIPTION_PROVIDER || 'voxtral').toLowerCase() as
+      | 'deepgram'
+      | 'voxtral',
+  },
+
+  // AWS Bedrock (for Voxtral transcription)
+  // Auth priority: Bearer token (API key) > IAM credentials (access key + secret)
+  bedrock: {
+    region: process.env.AWS_BEDROCK_REGION || process.env.AWS_REGION || 'us-west-2',
+    bearerToken: process.env.AWS_BEARER_TOKEN_BEDROCK || '',
+    accessKeyId: process.env.AWS_BEDROCK_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID || '',
+    secretAccessKey: process.env.AWS_BEDROCK_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY || '',
+    voxtralModel: process.env.AWS_BEDROCK_VOXTRAL_MODEL || 'mistral.voxtral-small-24b-2507',
+    mistralModel: process.env.AWS_BEDROCK_MISTRAL_MODEL || 'mistral.magistral-small-2509',
   },
 
   // Deepgram (word-level transcription for voiceover pipeline)

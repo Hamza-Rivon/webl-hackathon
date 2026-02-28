@@ -18,6 +18,14 @@ import { config } from '../config.js';
 import { usageService } from '../services/usage.js';
 import { randomUUID } from 'crypto';
 import {
+  type AiProvider,
+  getOpenAiCompatibleClient,
+  getOpenAiCompatibleModel,
+  getProviderLogContext,
+  isProviderConfigured,
+} from '../services/llmProvider.js';
+import { callBedrockMistralChat } from '../services/bedrockMistral.js';
+import {
   UnitBatchAnalysisSchema,
   UnitBatchAnalysisJsonSchema,
   buildUnitBatchAnalysisPrompt,
@@ -127,6 +135,11 @@ const KEYWORD_STOPWORDS = new Set([
   'just',
   'got',
 ]);
+const KEYWORD_SEED_FALLBACK = ['speech', 'dialogue', 'narration', 'voiceover', 'segment'];
+const RUNPOD_CONTEXT_WINDOW_TOKENS = Number(process.env.VLLM_CONTEXT_WINDOW_TOKENS || '32768');
+const RUNPOD_COMPLETION_TOKEN_CAP = Number(process.env.VLLM_MAX_COMPLETION_TOKENS || '8192');
+const RUNPOD_MIN_COMPLETION_TOKENS = 1024;
+const RUNPOD_TOKEN_SAFETY_BUFFER = 768;
 
 // ==================== JOB PROCESSOR ====================
 
@@ -265,7 +278,7 @@ export async function processVoiceoverSegmentation(
       unitsDraft,
     });
 
-    const analysisOutput: UnitBatchAnalysis = await callUnitAnalysis(prompt, userId);
+    const analysisOutput: UnitBatchAnalysis = await callUnitAnalysis(prompt, userId, units);
 
     const analysisByIndex = mapAnalysisToUnits(analysisOutput, units);
 
@@ -470,33 +483,110 @@ export async function processVoiceoverSegmentation(
 
 // ==================== LLM + EMBEDDINGS ====================
 
-async function callUnitAnalysis(prompt: string, userId: string): Promise<UnitBatchAnalysis> {
-  const hasOpenAi = Boolean(config.openai.apiKey);
-  const hasGemini = Boolean(config.ai.geminiApiKey);
+async function callUnitAnalysis(
+  prompt: string,
+  userId: string,
+  units: VoiceoverUnit[]
+): Promise<UnitBatchAnalysis> {
+  const provider = config.ai.provider as AiProvider;
 
-  if (hasOpenAi) {
+  if (provider === 'gemini') {
+    if (!isProviderConfigured(provider)) {
+      throw new Error('AI_PROVIDER is set to gemini but GEMINI_API_KEY is not configured');
+    }
+    await usageService.recordUsage(userId, {
+      geminiCalls: 1,
+      segmentAnalysisCalls: 1,
+    });
+    const raw = await callGemini(prompt);
+    return await validateOrRepairUnitAnalysis(raw, prompt, userId, provider, units);
+  }
+
+  if (provider === 'mistral') {
+    if (!isProviderConfigured(provider)) {
+      throw new Error('AI_PROVIDER is set to mistral but no Bedrock credentials configured');
+    }
     await usageService.recordUsage(userId, {
       openAiChatCalls: 1,
       segmentAnalysisCalls: 1,
     });
-    const raw = await callOpenAi(prompt, config.voiceover.models.call4);
-    return await validateOrRepairUnitAnalysis(raw, prompt, userId);
+    const raw = await callBedrockMistralChat({
+      systemPrompt: 'You are a helpful assistant designed to output JSON.',
+      userPrompt: prompt,
+      maxTokens: 4096,
+      temperature: 0,
+    });
+    return await validateOrRepairUnitAnalysis(raw, prompt, userId, provider, units);
   }
 
-  if (!hasGemini) {
-    throw new Error('No LLM provider configured for unit analysis');
+  if (!isProviderConfigured(provider)) {
+    throw new Error(
+      provider === 'runpod'
+        ? 'AI_PROVIDER is set to runpod but VLLM_BASE_URL is not configured'
+        : 'AI_PROVIDER is set to openai but OPENAI_API_KEY is not configured'
+    );
   }
 
-  await usageService.recordUsage(userId, {
-    geminiCalls: 1,
-    segmentAnalysisCalls: 1,
-  });
-  const raw = await callGemini(prompt);
-  return await validateOrRepairUnitAnalysis(raw, prompt, userId);
+  if (provider === 'openai' || provider === 'runpod') {
+    await usageService.recordUsage(userId, {
+      openAiChatCalls: 1,
+      segmentAnalysisCalls: 1,
+    });
+    const raw = await callOpenAiCompatible(prompt, config.voiceover.models.call4, provider);
+    return await validateOrRepairUnitAnalysis(raw, prompt, userId, provider, units);
+  }
+
+  throw new Error(`Unsupported AI_PROVIDER "${provider}" for unit analysis`);
 }
 
-async function callOpenAi(prompt: string, model: string): Promise<string> {
-  const client = new OpenAI({ apiKey: config.openai.apiKey });
+async function callOpenAiCompatible(
+  prompt: string,
+  preferredModel: string,
+  provider: 'openai' | 'runpod'
+): Promise<string> {
+  const model = getOpenAiCompatibleModel(preferredModel, provider);
+  const client = getOpenAiCompatibleClient(provider);
+
+  if (provider === 'runpod') {
+    const temperature = 0;
+    const maxTokens = computeRunpodMaxTokens(prompt);
+    logger.info('[Runpod][voiceover-segmentation] unit-analysis request', {
+      ...getProviderLogContext(provider),
+      promptChars: prompt.length,
+      maxTokens,
+    });
+    const response = await client.chat.completions.create({
+      model,
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: 'You are a helpful assistant designed to output JSON.' },
+        { role: 'user', content: prompt },
+      ],
+      ...(temperature !== undefined ? { temperature } : {}),
+      max_tokens: maxTokens,
+      max_completion_tokens: maxTokens,
+    });
+
+    const content = response.choices[0]?.message?.content;
+    if (!content || typeof content !== 'string') {
+      throw new Error('Runpod response is empty');
+    }
+    const finishReason = response.choices[0]?.finish_reason ?? null;
+    if (finishReason === 'length') {
+      logger.warn('[Runpod][voiceover-segmentation] unit-analysis reached token limit', {
+        ...getProviderLogContext(provider),
+        promptChars: prompt.length,
+        maxTokens,
+      });
+    }
+    logger.info('[Runpod][voiceover-segmentation] unit-analysis response', {
+      ...getProviderLogContext(provider),
+      responseChars: content.length,
+      finishReason,
+    });
+    return content;
+  }
+
   const response = await client.responses.create({
     model,
     input: [
@@ -558,19 +648,166 @@ async function callGemini(prompt: string): Promise<string> {
   return result.response.text();
 }
 
-async function validateOrRepairUnitAnalysis(raw: string, prompt: string, userId: string): Promise<UnitBatchAnalysis> {
+function parseJsonEnvelope(raw: string): unknown {
+  const cleaned = String(raw || '')
+    .replace(/```json\s*/gi, '')
+    .replace(/```\s*/g, '')
+    .trim();
+  const jsonMatch = cleaned.match(/[\[{][\s\S]*[\]}]/);
+  return JSON.parse(jsonMatch ? jsonMatch[0] : cleaned);
+}
+
+function estimateTokenCount(text: string): number {
+  if (!text) return 0;
+  return Math.ceil(text.length / 3.2);
+}
+
+function computeRunpodMaxTokens(prompt: string): number {
+  const cappedContext = Math.max(4096, RUNPOD_CONTEXT_WINDOW_TOKENS);
+  const completionCap = Math.max(1, Math.min(RUNPOD_COMPLETION_TOKEN_CAP, cappedContext));
+  const estimatedInputTokens = estimateTokenCount(prompt) + 256; // role + json formatting overhead
+  const available = cappedContext - estimatedInputTokens - RUNPOD_TOKEN_SAFETY_BUFFER;
+  const bounded = Math.min(completionCap, Math.max(1, available));
+
+  if (bounded < RUNPOD_MIN_COMPLETION_TOKENS) {
+    logger.warn('[Runpod][voiceover-segmentation] low completion token budget', {
+      estimatedInputTokens,
+      cappedContext,
+      available,
+      bounded,
+    });
+  }
+
+  return bounded;
+}
+
+function applyUnitBatchAnalysisGuardrails(
+  parsed: unknown,
+  units: VoiceoverUnit[],
+  provider: AiProvider
+): {
+  units: Array<{ unitIndex: number; keywords: string[]; emotionalTone: string }>;
+} {
+  const payload = (parsed ?? {}) as { units?: unknown };
+  const inputUnits = Array.isArray(payload.units) ? payload.units : [];
+  const unitByIndex = new Map<number, VoiceoverUnit>(units.map((unit) => [unit.unitIndex, unit]));
+
+  let adjustedKeywordUnits = 0;
+  let adjustedToneUnits = 0;
+
+  const normalizedUnits = inputUnits.map((entry, index) => {
+    const item = (entry ?? {}) as {
+      unitIndex?: unknown;
+      keywords?: unknown;
+      emotionalTone?: unknown;
+    };
+
+    const rawUnitIndex = Number(item.unitIndex);
+    const unitIndex = Number.isFinite(rawUnitIndex)
+      ? Math.max(0, Math.round(rawUnitIndex))
+      : index;
+    const sourceUnit = unitByIndex.get(unitIndex);
+
+    const providedKeywords = Array.isArray(item.keywords)
+      ? item.keywords.filter((k): k is string => typeof k === 'string')
+      : [];
+    const normalizedKeywords = normalizeKeywords(providedKeywords);
+    const fallbackKeywords = sourceUnit
+      ? buildFallbackKeywords(sourceUnit.label, sourceUnit.scriptSentence)
+      : [];
+    const mergedKeywords = Array.from(new Set([...normalizedKeywords, ...fallbackKeywords]));
+    const beforeKeywordCount = mergedKeywords.length;
+
+    let seedIndex = 0;
+    while (mergedKeywords.length < 3) {
+      const nextSeed = KEYWORD_SEED_FALLBACK[seedIndex % KEYWORD_SEED_FALLBACK.length];
+      if (nextSeed && !mergedKeywords.includes(nextSeed)) {
+        mergedKeywords.push(nextSeed);
+      }
+      seedIndex += 1;
+    }
+    if (mergedKeywords.length !== beforeKeywordCount) {
+      adjustedKeywordUnits += 1;
+    }
+
+    const hadTone = typeof item.emotionalTone === 'string' && item.emotionalTone.trim().length > 0;
+    const emotionalTone =
+      hadTone
+        ? normalizeTone(item.emotionalTone as string)
+        : 'neutral';
+    if (!hadTone) {
+      adjustedToneUnits += 1;
+    }
+
+    return {
+      unitIndex,
+      keywords: mergedKeywords.slice(0, 5),
+      emotionalTone,
+    };
+  });
+
+  if (provider === 'runpod' && (adjustedKeywordUnits > 0 || adjustedToneUnits > 0)) {
+    logger.warn('[Runpod][voiceover-segmentation] guardrails adjusted unit-analysis output', {
+      ...getProviderLogContext(provider),
+      totalUnitsFromModel: normalizedUnits.length,
+      adjustedKeywordUnits,
+      adjustedToneUnits,
+    });
+  }
+
+  return {
+    units: normalizedUnits,
+  };
+}
+
+async function validateOrRepairUnitAnalysis(
+  raw: string,
+  prompt: string,
+  userId: string,
+  provider: AiProvider,
+  units: VoiceoverUnit[]
+): Promise<UnitBatchAnalysis> {
   try {
-    const parsed = JSON.parse(raw);
+    const parsed = applyUnitBatchAnalysisGuardrails(parseJsonEnvelope(raw), units, provider);
     return UnitBatchAnalysisSchema.parse(parsed);
   } catch (error) {
-    logger.warn('Unit analysis JSON validation failed, attempting repair');
-    return await repairUnitAnalysisWithOpenAi(raw, prompt, userId);
+    logger.warn('Unit analysis JSON validation failed, attempting repair', {
+      provider,
+      rawChars: raw.length,
+      error: error instanceof Error ? error.message : 'unknown',
+    });
+    return await repairUnitAnalysisWithOpenAi(raw, prompt, userId, provider, units);
   }
 }
 
-async function repairUnitAnalysisWithOpenAi(raw: string, prompt: string, userId: string): Promise<UnitBatchAnalysis> {
-  if (!config.openai.apiKey) {
-    throw new Error('OpenAI API key required for JSON repair');
+async function repairUnitAnalysisWithOpenAi(
+  raw: string,
+  prompt: string,
+  userId: string,
+  provider: AiProvider,
+  units: VoiceoverUnit[]
+): Promise<UnitBatchAnalysis> {
+  if (provider === 'gemini' && !config.openai.apiKey) {
+    throw new Error('OpenAI API key required for JSON repair when AI_PROVIDER=gemini');
+  }
+
+  if (provider === 'mistral') {
+    // For mistral, attempt repair via Bedrock Mistral itself
+    await usageService.recordUsage(userId, {
+      openAiChatCalls: 1,
+      segmentAnalysisCalls: 1,
+    });
+    const rawForRepair = raw.length > 12000 ? `${raw.slice(0, 12000)}\n...[truncated]` : raw;
+    const repairPrompt = `Return JSON only. Fix the output to match the required schema.\n\nSchema:\n${JSON.stringify(
+      UnitBatchAnalysisJsonSchema.schema
+    )}\n\nPrompt:\n${prompt}\n\nRaw Output:\n${rawForRepair}`;
+    const repaired = await callBedrockMistralChat({
+      systemPrompt: 'Return JSON only and strictly follow the provided schema.',
+      userPrompt: repairPrompt,
+      temperature: 0,
+    });
+    const repairedParsed = applyUnitBatchAnalysisGuardrails(parseJsonEnvelope(repaired), units, provider);
+    return UnitBatchAnalysisSchema.parse(repairedParsed);
   }
 
   await usageService.recordUsage(userId, {
@@ -578,9 +815,61 @@ async function repairUnitAnalysisWithOpenAi(raw: string, prompt: string, userId:
     segmentAnalysisCalls: 1,
   });
 
-  const client = new OpenAI({ apiKey: config.openai.apiKey });
+  const repairProvider: 'openai' | 'runpod' =
+    provider === 'runpod' ? 'runpod' : 'openai';
+  const model = getOpenAiCompatibleModel(config.voiceover.models.call2, repairProvider);
+  const client = getOpenAiCompatibleClient(repairProvider);
+
+  if (repairProvider === 'runpod') {
+    const rawForRepair = raw.length > 12000 ? `${raw.slice(0, 12000)}\n...[truncated raw output]` : raw;
+    const repairPrompt = `Return JSON only. Fix the output to match the required schema.\n\nSchema:\n${JSON.stringify(
+      UnitBatchAnalysisJsonSchema.schema
+    )}\n\nPrompt:\n${prompt}\n\nRaw Output:\n${rawForRepair}`;
+    const maxTokens = computeRunpodMaxTokens(`${prompt}\n${rawForRepair}`);
+
+    logger.info('[Runpod][voiceover-segmentation] repair request', {
+      ...getProviderLogContext(repairProvider),
+      promptChars: prompt.length,
+      rawChars: raw.length,
+      maxTokens,
+    });
+    const response = await client.chat.completions.create({
+      model,
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: 'Return JSON only and strictly follow the provided schema.' },
+        { role: 'user', content: repairPrompt },
+      ],
+      temperature: 0,
+      max_tokens: maxTokens,
+      max_completion_tokens: maxTokens,
+    });
+
+    const content = response.choices[0]?.message?.content;
+    if (!content || typeof content !== 'string') {
+      throw new Error('Runpod repair response is empty');
+    }
+    const finishReason = response.choices[0]?.finish_reason ?? null;
+    if (finishReason === 'length') {
+      logger.warn('[Runpod][voiceover-segmentation] repair reached token limit', {
+        ...getProviderLogContext(repairProvider),
+        promptChars: prompt.length,
+        rawChars: raw.length,
+        maxTokens,
+      });
+    }
+    logger.info('[Runpod][voiceover-segmentation] repair response', {
+      ...getProviderLogContext(repairProvider),
+      responseChars: content.length,
+      finishReason,
+    });
+
+    const parsed = applyUnitBatchAnalysisGuardrails(parseJsonEnvelope(content), units, provider);
+    return UnitBatchAnalysisSchema.parse(parsed);
+  }
+
   const response = await client.responses.create({
-    model: config.voiceover.models.call2,
+    model,
     input: [
       { role: 'system', content: 'You are a helpful assistant designed to output JSON.' },
       {
@@ -611,7 +900,11 @@ async function repairUnitAnalysisWithOpenAi(raw: string, prompt: string, userId:
     // Try to use partial output if available
     if (response.output_text) {
       try {
-        const parsed = JSON.parse(response.output_text);
+        const parsed = applyUnitBatchAnalysisGuardrails(
+          parseJsonEnvelope(response.output_text),
+          units,
+          provider
+        );
         // Check if we have at least some units
         if (parsed.units && Array.isArray(parsed.units) && parsed.units.length > 0) {
           logger.warn(`Using incomplete repair response output with ${parsed.units.length} units (may be truncated)`);
@@ -629,7 +922,7 @@ async function repairUnitAnalysisWithOpenAi(raw: string, prompt: string, userId:
     throw new Error(`OpenAI repair response status: ${response.status}`);
   }
 
-  const parsed = JSON.parse(response.output_text);
+  const parsed = applyUnitBatchAnalysisGuardrails(parseJsonEnvelope(response.output_text), units, provider);
   return UnitBatchAnalysisSchema.parse(parsed);
 }
 
@@ -1246,13 +1539,19 @@ function buildUnitKeywords(
   analysis?: UnitAnalysisResult
 ): string[] {
   const normalized = analysis ? normalizeKeywords(analysis.keywords) : [];
-  if (normalized.length >= 3) return normalized;
-
   const fallback = buildFallbackKeywords(unit.label, unit.scriptSentence);
-  if (fallback.length >= 3) return fallback;
+  const merged = Array.from(new Set([...normalized, ...fallback]));
 
-  if (fallback.length > 0) return fallback;
-  return normalized;
+  let seedIndex = 0;
+  while (merged.length < 3) {
+    const nextSeed = KEYWORD_SEED_FALLBACK[seedIndex % KEYWORD_SEED_FALLBACK.length];
+    if (nextSeed && !merged.includes(nextSeed)) {
+      merged.push(nextSeed);
+    }
+    seedIndex += 1;
+  }
+
+  return merged.slice(0, 5);
 }
 
 function extractKeywordTokens(text: string): string[] {

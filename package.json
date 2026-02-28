@@ -32,6 +32,8 @@
     "db:inspect-chunks": "tsx scripts/inspect-chunk-selection.ts",
     "db:check-mux-transcript": "tsx scripts/check-mux-transcript.ts",
     "db:trigger-render": "tsx scripts/trigger-render.ts",
+    "test:runpod-video": "tsx scripts/test-runpod-video-analysis.ts",
+    "test:s3-chunk-url": "tsx scripts/test-s3-chunk-url.ts",
     "docker:dev": "docker-compose -f docker/docker-compose.dev.yml up -d",
     "docker:dev:stop": "docker-compose -f docker/docker-compose.dev.yml down",
     "docker:build": "docker-compose -f docker/docker-compose.yml build",
@@ -44,8 +46,12 @@
     "clean": "pnpm --parallel -r exec rm -rf node_modules dist .turbo"
   },
   "devDependencies": {
-    "@typescript-eslint/parser": "^8.25.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.1000.0",
+    "@aws-sdk/client-s3": "^3.985.0",
+    "@aws-sdk/s3-request-presigner": "^3.985.0",
     "@types/node": "^22.0.0",
+    "@typescript-eslint/parser": "^8.25.0",
+    "dotenv": "^16.6.1",
     "eslint": "^9.0.0",
     "eslint-plugin-security": "^3.0.0",
     "prettier": "^3.4.0",

@@ -18,7 +18,7 @@
 import { Job } from 'bullmq';
 import { prisma } from '../services/db.js';
 import { s3Service } from '../services/s3.js';
-import { deepgramService } from '../services/deepgram.js';
+import { transcriptionService } from '../services/transcription.js';
 import { progressPublisher } from '../services/progress.js';
 import { usageService } from '../services/usage.js';
 import { logger } from '@webl/shared';
@@ -39,8 +39,8 @@ export async function processVoiceoverTranscript(
   bullJob: Job<VoiceoverTranscriptJobData>
 ): Promise<void> {
   const { jobId, episodeId, userId, s3Key } = bullJob.data;
-  let deepgramCallMade = false;
-  let deepgramUsageLogged = false;
+  let transcriptionCallMade = false;
+  let transcriptionUsageLogged = false;
 
   logger.info(`[Phase 1.2] Starting voiceover transcript job ${jobId}`, {
     episodeId,
@@ -85,6 +85,7 @@ export async function processVoiceoverTranscript(
       where: { id: episodeId },
       select: {
         rawVoiceoverS3Key: true,
+        rawVoiceoverDuration: true,
         scriptContent: true,
       },
     });
@@ -100,35 +101,36 @@ export async function processVoiceoverTranscript(
     }
     logger.info('[Phase 1.2] RECEIVED: episode state', { rawVoiceoverS3Key: voiceoverS3Key, hasScript: Boolean(episode?.scriptContent) });
 
-    // Step 2: Generate signed URL for Deepgram (20%)
-    await updateProgress(jobId, 'downloading', 20, 'Generating signed URL for Deepgram');
+    // Step 2: Generate signed URL for transcription (20%)
+    const activeProvider = transcriptionService.provider;
+    await updateProgress(jobId, 'downloading', 20, `Generating signed URL for ${activeProvider}`);
 
     const signedUrl = await s3Service.getSignedDownloadUrl(voiceoverS3Key, 7200);
-    logger.info('[Phase 1.2] DOING: calling Deepgram with signed URL (audio not altered)', { urlLength: signedUrl.length });
+    logger.info(`[Phase 1.2] DOING: calling ${activeProvider} with signed URL (audio not altered)`, { urlLength: signedUrl.length });
 
-    // Step 3: Transcribe with Deepgram (50%)
-    await updateProgress(jobId, 'processing', 50, 'Transcribing with Deepgram');
+    // Step 3: Transcribe with configured provider (50%)
+    await updateProgress(jobId, 'processing', 50, `Transcribing with ${activeProvider}`);
 
-    deepgramCallMade = true;
-    const { words, durationSeconds: deepgramDurationSeconds, rawResponse: rawDeepgramResponse } =
-      await deepgramService.transcribeFromUrl(signedUrl);
+    transcriptionCallMade = true;
+    const { words, durationSeconds: transcriptDurationSeconds, rawResponse: rawTranscriptResponse, provider: usedProvider } =
+      await transcriptionService.transcribeFromUrl(signedUrl);
     const transcriptionSeconds =
-      deepgramDurationSeconds ?? (words.length > 0 ? words[words.length - 1]!.endMs / 1000 : 0);
+      transcriptDurationSeconds ?? (words.length > 0 ? words[words.length - 1]!.endMs / 1000 : 0);
     await usageService.recordUsage(userId, {
-      deepgramTranscriptions: 1,
-      deepgramAudioSeconds: transcriptionSeconds > 0 ? transcriptionSeconds : 0,
+      deepgramTranscriptions: usedProvider === 'deepgram' ? 1 : 0,
+      deepgramAudioSeconds: usedProvider === 'deepgram' && transcriptionSeconds > 0 ? transcriptionSeconds : 0,
     });
-    deepgramUsageLogged = true;
+    transcriptionUsageLogged = true;
 
-    logger.info('[Phase 1.2] RECEIVED: from Deepgram (normalized by service)', {
+    logger.info(`[Phase 1.2] RECEIVED: from ${usedProvider} (normalized by service)`, {
       episodeId,
       wordCount: words.length,
-      durationSeconds: deepgramDurationSeconds ?? (words.length > 0 ? words[words.length - 1]!.endMs / 1000 : null),
+      durationSeconds: transcriptDurationSeconds ?? (words.length > 0 ? words[words.length - 1]!.endMs / 1000 : null),
       firstWord: words[0] ? { word: words[0].word, startMs: words[0].startMs, endMs: words[0].endMs } : null,
       lastWord: words.length > 0 ? words[words.length - 1]! ? { word: words[words.length - 1]!.word, startMs: words[words.length - 1]!.startMs, endMs: words[words.length - 1]!.endMs } : null : null,
-      rawDeepgramResponseStored: Boolean(rawDeepgramResponse),
+      rawResponseStored: Boolean(rawTranscriptResponse),
     });
-    logger.info(`[VOICEOVER_TRACE_FULL] phase=1.2 step=RECEIVED_FROM_DEEPGRAM episodeId=${episodeId} wordCount=${words.length} (next line = full words with timestamps, no truncation)`);
+    logger.info(`[VOICEOVER_TRACE_FULL] phase=1.2 step=RECEIVED_FROM_${usedProvider.toUpperCase()} episodeId=${episodeId} wordCount=${words.length} (next line = full words with timestamps, no truncation)`);
     logger.info(
       `[VOICEOVER_TRACE_WORDS_JSON] ${JSON.stringify(words.map((w) => ({ word: w.word, startMs: w.startMs, endMs: w.endMs, confidence: w.confidence })))}`
     );
@@ -142,7 +144,7 @@ export async function processVoiceoverTranscript(
 
     const lastWord = words[words.length - 1];
     const durationSeconds =
-      deepgramDurationSeconds ?? (lastWord ? lastWord.endMs / 1000 : 0);
+      transcriptDurationSeconds ?? (lastWord ? lastWord.endMs / 1000 : 0);
 
     const episodeUpdate: {
       wordTranscript: any;
@@ -151,14 +153,15 @@ export async function processVoiceoverTranscript(
       rawDeepgramResponse?: any;
     } = {
       wordTranscript: words as any, // Store as JSON
-      rawDeepgramResponse: rawDeepgramResponse ?? undefined, // Exact API response for debugging
+      rawDeepgramResponse: rawTranscriptResponse ?? undefined, // Exact API response for debugging
     };
 
     if (!episode?.rawVoiceoverS3Key && voiceoverS3Key) {
       episodeUpdate.rawVoiceoverS3Key = voiceoverS3Key;
     }
 
-    if (Number.isFinite(durationSeconds) && durationSeconds > 0) {
+    // Only set rawVoiceoverDuration if not already set from ingest (Mux duration is authoritative)
+    if (!episode?.rawVoiceoverDuration && Number.isFinite(durationSeconds) && durationSeconds > 0) {
       episodeUpdate.rawVoiceoverDuration = durationSeconds;
     }
 
@@ -171,7 +174,8 @@ export async function processVoiceoverTranscript(
       episodeId,
       wordTranscriptCount: words.length,
       rawVoiceoverDuration: episodeUpdate.rawVoiceoverDuration,
-      rawDeepgramResponsePresent: Boolean(episodeUpdate.rawDeepgramResponse),
+      rawResponsePresent: Boolean(episodeUpdate.rawDeepgramResponse),
+      transcriptionProvider: usedProvider,
     });
     logger.info(`[VOICEOVER_TRACE_FULL] phase=1.2 step=STORED_episode_wordTranscript episodeId=${episodeId} wordCount=${words.length} (next line = full words with timestamps, no truncation)`);
     logger.info(
@@ -186,15 +190,14 @@ export async function processVoiceoverTranscript(
       outputData: {
         wordCount: words.length,
         durationSeconds,
-        transcriptSource: 'deepgram',
+        transcriptSource: usedProvider,
         keytermPrompting: {
           enabled: false,
           source: 'disabled',
           keytermCount: 0,
           preview: [],
         },
-        /** Raw Deepgram API response exactly as received (no alteration) */
-        rawDeepgramResponse: rawDeepgramResponse ?? undefined,
+        rawResponse: rawTranscriptResponse ?? undefined,
       },
     });
 
@@ -235,9 +238,9 @@ export async function processVoiceoverTranscript(
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`[Phase 1.2] Voiceover transcript job ${jobId} failed:`, error);
 
-    if (deepgramCallMade && !deepgramUsageLogged) {
+    if (transcriptionCallMade && !transcriptionUsageLogged) {
       await usageService.recordUsage(userId, {
-        deepgramTranscriptions: 1,
+        deepgramTranscriptions: transcriptionService.provider === 'deepgram' ? 1 : 0,
       });
     }
 

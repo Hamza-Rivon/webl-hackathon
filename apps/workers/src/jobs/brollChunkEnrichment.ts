@@ -24,8 +24,10 @@ import { prisma } from '../services/db.js';
 import { progressPublisher } from '../services/progress.js';
 import { queues } from '../queue.js';
 import { logger } from '@webl/shared';
-// config import removed - not needed
+import { config } from '../config.js';
 import { usageService } from '../services/usage.js';
+import { s3Service } from '../services/s3.js';
+import { analyzeVideoWithRunpod } from '../services/runpodVideoAnalysis.js';
 
 // Import @mux/ai workflows
 import { workflows } from '@mux/ai';
@@ -52,6 +54,22 @@ const MODERATION_THRESHOLDS = {
   harassment: 0.7,
   selfHarm: 0.8,
 };
+
+function exceedsModerationThreshold(maxScores: {
+  sexual?: number;
+  violence?: number;
+  hate?: number;
+  harassment?: number;
+  selfHarm?: number;
+}): boolean {
+  return (
+    (maxScores.violence ?? 0) > MODERATION_THRESHOLDS.violence ||
+    (maxScores.sexual ?? 0) > MODERATION_THRESHOLDS.sexual ||
+    (maxScores.hate ?? 0) > MODERATION_THRESHOLDS.hate ||
+    (maxScores.harassment ?? 0) > MODERATION_THRESHOLDS.harassment ||
+    (maxScores.selfHarm ?? 0) > MODERATION_THRESHOLDS.selfHarm
+  );
+}
 
 // ==================== JOB PROCESSOR ====================
 
@@ -147,24 +165,22 @@ export async function processBrollChunkEnrichment(
 
       logger.info(`Chunk ${chunkIndex} inherited AI data from slot clip with position context`);
     } else {
-      // Phase 2.4: Refinement mode - full chunk-level Mux AI analysis
-      if (!muxAssetId) {
-        throw new Error(`muxAssetId required for refinement mode`);
+      // Phase 2.4: Refinement mode - full chunk-level analysis (Mux AI or Runpod Qwen3-VL)
+      const useRunpod = config.ai.provider === 'runpod';
+      if (!useRunpod && !muxAssetId) {
+        throw new Error(`muxAssetId required for refinement mode when not using Runpod`);
       }
 
-      // Step 1: Get AI summary and tags using @mux/ai (10-50%)
+      // Step 1: Get AI summary and tags (10-50%)
       await updateProgress(
         jobId,
         'analyzing',
         10,
-        'Analyzing chunk with @mux/ai (tags & summary)'
+        useRunpod
+          ? 'Analyzing chunk with Runpod Qwen3-VL (tags & summary)'
+          : 'Analyzing chunk with @mux/ai (tags & summary)'
       );
 
-      logger.info(`Calling @mux/ai getSummaryAndTags for asset ${muxAssetId} (refinement mode)`);
-
-      await usageService.recordUsage(userId, {
-        muxAiSummaryCalls: 1,
-      });
       // Check if this is an A-roll chunk (has audio/transcript)
       const slotClip = await prisma.slotClip.findUnique({
         where: { id: slotClipId },
@@ -176,37 +192,105 @@ export async function processBrollChunkEnrichment(
       // Get chunk transcript if available (for A-roll chunks)
       const chunk = await prisma.brollChunk.findUnique({
         where: { id: chunkId },
+        select: {
+          s3Key: true,
+          metadata: true,
+        },
       });
 
       const chunkMetadata = ((chunk as any)?.metadata as { transcript?: string; words?: any[] }) || null;
       const transcript = chunkMetadata?.transcript || null;
+      let aiResult: { tags: string[]; description: string };
+      let moderationResult: {
+        maxScores: {
+          sexual: number;
+          violence: number;
+          hate?: number;
+          harassment?: number;
+          selfHarm?: number;
+        };
+        exceedsThreshold: boolean;
+      };
 
-      const aiResult = await workflows.getSummaryAndTags(muxAssetId, {
-        provider: 'openai',
-        tone: 'neutral',
-        includeTranscript: isARollChunk && transcript ? true : false,
-      });
+      if (useRunpod) {
+        if (!chunk?.s3Key) {
+          throw new Error(`Chunk ${chunkId} is missing s3Key for Runpod analysis`);
+        }
+
+        const signedUrl = await s3Service.getSignedDownloadUrl(chunk.s3Key, 7200);
+        logger.info('[Runpod][chunk-enrichment] request', {
+          model: config.vllm.model,
+          endpointHost: (() => {
+            try {
+              return new URL(config.vllm.baseUrl).host;
+            } catch {
+              return config.vllm.baseUrl || null;
+            }
+          })(),
+          chunkId,
+          chunkIndex,
+          isARollChunk,
+        });
+        await usageService.recordUsage(userId, {
+          openAiChatCalls: 1,
+        });
+
+        const runpodResult = await analyzeVideoWithRunpod({
+          videoUrl: signedUrl,
+          transcript: isARollChunk && transcript ? transcript : null,
+        });
+
+        aiResult = {
+          tags: runpodResult.tags,
+          description: runpodResult.description,
+        };
+        moderationResult = {
+          maxScores: runpodResult.moderationScores,
+          exceedsThreshold: exceedsModerationThreshold(runpodResult.moderationScores),
+        };
+      } else {
+        logger.info(`Calling @mux/ai getSummaryAndTags for asset ${muxAssetId} (refinement mode)`);
+
+        await usageService.recordUsage(userId, {
+          muxAiSummaryCalls: 1,
+        });
+        const summaryResult = await workflows.getSummaryAndTags(muxAssetId!, {
+          provider: 'openai',
+          tone: 'neutral',
+          includeTranscript: isARollChunk && transcript ? true : false,
+        });
+
+        await usageService.recordUsage(userId, {
+          muxAiModerationCalls: 1,
+        });
+        logger.info(`Calling @mux/ai getModerationScores for asset ${muxAssetId}`);
+        const moderation = await workflows.getModerationScores(muxAssetId!, {
+          provider: 'openai',
+        });
+
+        aiResult = {
+          tags: summaryResult.tags,
+          description: summaryResult.description,
+        };
+        moderationResult = {
+          maxScores: moderation.maxScores,
+          exceedsThreshold: moderation.exceedsThreshold,
+        };
+      }
 
       logger.info(`Received AI analysis for chunk ${chunkIndex} (refinement):`, {
+        provider: useRunpod ? 'runpod' : 'mux',
         tags: aiResult.tags,
         description: aiResult.description,
       });
 
       await updateProgress(jobId, 'analyzing', 50, 'AI analysis complete');
 
-      // Step 2: Get moderation scores using @mux/ai (50-80%)
+      // Step 2: moderation already computed from provider call (50-80%)
       await updateProgress(jobId, 'analyzing', 50, 'Running content moderation');
 
-      logger.info(`Calling @mux/ai getModerationScores for asset ${muxAssetId}`);
-
-      await usageService.recordUsage(userId, {
-        muxAiModerationCalls: 1,
-      });
-      const moderationResult = await workflows.getModerationScores(muxAssetId, {
-        provider: 'openai',
-      });
-
       logger.info(`Received moderation scores for chunk ${chunkIndex}:`, {
+        provider: useRunpod ? 'runpod' : 'mux',
         maxScores: moderationResult.maxScores,
         exceedsThreshold: moderationResult.exceedsThreshold,
       });
@@ -219,8 +303,7 @@ export async function processBrollChunkEnrichment(
 
       if (
         moderationResult.exceedsThreshold ||
-        maxScores.violence > MODERATION_THRESHOLDS.violence ||
-        maxScores.sexual > MODERATION_THRESHOLDS.sexual
+        exceedsModerationThreshold(maxScores)
       ) {
         moderationStatus = 'review';
         logger.warn(`Chunk ${chunkIndex} flagged for review`, { maxScores });

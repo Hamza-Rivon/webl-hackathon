@@ -1,0 +1,10 @@
+-- AlterTable
+ALTER TABLE "User" ADD COLUMN     "subscriptionActive" BOOLEAN NOT NULL DEFAULT true;
+
+-- AlterTable
+ALTER TABLE "UserUsage" ADD COLUMN     "maxEstimatedCostUSD" DOUBLE PRECISION NOT NULL DEFAULT 10.0,
+ADD COLUMN     "maxTotalEmbeddingCalls" INTEGER NOT NULL DEFAULT 300,
+ADD COLUMN     "maxTotalEpisodesCreated" INTEGER NOT NULL DEFAULT 50,
+ADD COLUMN     "maxTotalExternalApiCalls" INTEGER NOT NULL DEFAULT 500,
+ADD COLUMN     "maxTotalLlmCalls" INTEGER NOT NULL DEFAULT 200,
+ADD COLUMN     "maxTotalRendersCompleted" INTEGER NOT NULL DEFAULT 20;

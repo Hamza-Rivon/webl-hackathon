@@ -1,0 +1,715 @@
+// ==================== NEON POSTGRESQL CONFIGURATION ====================
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL") // Pooled Neon connection
+  directUrl  = env("DIRECT_URL") // Direct Neon connection for migrations
+  extensions = [vector]
+}
+
+// ==================== USER MODEL ====================
+model User {
+  id           String    @id // Clerk user_id
+  email        String    @unique
+  firstName    String?
+  lastName     String?
+  imageUrl     String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  lastSignInAt DateTime?
+
+  onboarded          Boolean          @default(false)
+  subscriptionTier   SubscriptionTier @default(free)
+  subscriptionActive Boolean          @default(true) // Master kill switch - set false to block all external calls
+  elevenLabsVoiceId  String? // Custom ElevenLabs voice ID for voiceover generation
+  elevenLabsApiKey   String? // Encrypted ElevenLabs API key (user-provided)
+
+  // Relations
+  series      Series[]
+  episodes    Episode[]
+  jobs        Job[]
+  activityEvents ActivityEvent[]
+  personaData Persona?
+  usage       UserUsage?
+  keyterms    Keyterm[]
+
+  @@index([email])
+}
+
+// ==================== USER USAGE MODEL (Rate Limiting) ====================
+
+model UserUsage {
+  id     String @id @default(cuid())
+  userId String @unique
+
+  // Hourly tracking
+  chunksProcessedThisHour      Int   @default(0)
+  llmCallsThisHour             Int   @default(0)
+  embeddingCallsThisHour       Int   @default(0)
+  transcriptionSecondsThisHour Float @default(0)
+  muxAiCallsThisHour           Int   @default(0)
+  ttsCharactersThisHour        Int   @default(0)
+  externalApiCallsThisHour     Int   @default(0)
+  hourlyResetAt                DateTime @default(now())
+
+  // Daily tracking
+  episodesCreatedToday      Int   @default(0)
+  rendersCompletedToday     Int   @default(0)
+  llmCallsToday             Int   @default(0)
+  embeddingCallsToday       Int   @default(0)
+  transcriptionSecondsToday Float @default(0)
+  muxAiCallsToday           Int   @default(0)
+  ttsCharactersToday        Int   @default(0)
+  externalApiCallsToday     Int   @default(0)
+  dailyResetAt              DateTime @default(now())
+
+  // Lifetime stats
+  totalChunksProcessed               Int   @default(0)
+  totalEpisodesCreated               Int   @default(0)
+  totalRendersCompleted              Int   @default(0)
+  totalExternalApiCalls              Int   @default(0)
+  totalLlmCalls                      Int   @default(0)
+  totalGeminiCalls                   Int   @default(0)
+  totalOpenAiChatCalls               Int   @default(0)
+  totalEmbeddingCalls                Int   @default(0)
+  totalOpenAiEmbeddingCalls          Int   @default(0)
+  totalDeepgramTranscriptions        Int   @default(0)
+  totalDeepgramAudioSeconds          Float @default(0)
+  totalMuxAiCalls                    Int   @default(0)
+  totalMuxAiSummaryCalls             Int   @default(0)
+  totalMuxAiModerationCalls          Int   @default(0)
+  totalMuxSubtitleRequests           Int   @default(0)
+  totalMuxTranscriptFetches          Int   @default(0)
+  totalElevenLabsTtsCalls            Int   @default(0)
+  totalElevenLabsValidationCalls     Int   @default(0)
+  totalElevenLabsCharacters          Int   @default(0)
+  totalScriptGenerationCalls         Int   @default(0)
+  totalKeytermExtractionCalls        Int   @default(0)
+  totalTranscriptCorrectionCalls     Int   @default(0)
+  totalScriptAlignmentLlmCalls       Int   @default(0)
+  totalVoiceoverEditVerificationCalls Int @default(0)
+  totalSegmentAnalysisCalls          Int   @default(0)
+  totalChunkSelectionCalls           Int   @default(0)
+  totalSemanticRerankCalls           Int   @default(0)
+  totalVoiceoverSegmentEmbeddingCalls Int @default(0)
+  totalBrollChunkEmbeddingCalls      Int   @default(0)
+  totalEstimatedCostUSD              Float @default(0)
+
+  // Hard limits (editable in DB, checked before every external API call)
+  maxTotalExternalApiCalls  Int   @default(500)   // Hard cap on ALL external API calls combined
+  maxTotalLlmCalls          Int   @default(200)   // Hard cap on LLM calls (Gemini + OpenAI chat)
+  maxTotalEmbeddingCalls    Int   @default(300)   // Hard cap on embedding calls
+  maxTotalEpisodesCreated   Int   @default(50)    // Hard cap on total episodes
+  maxTotalRendersCompleted  Int   @default(20)    // Hard cap on total renders
+  maxEstimatedCostUSD       Float @default(10.0)  // Hard cap on estimated cost in USD
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([hourlyResetAt])
+}
+
+enum SubscriptionTier {
+  free
+  pro
+  enterprise
+}
+
+// ==================== PERSONA MODEL ====================
+model Persona {
+  id     String @id @default(cuid())
+  userId String @unique
+
+  // Core identity
+  niche          String
+  subNiche       String?
+  targetAudience String
+
+  // Style preferences
+  tone      String
+  language  String     @default("en")
+  platforms Platform[]
+
+  // Business
+  offer String?
+  cta   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+enum Platform {
+  tiktok
+  reels
+  shorts
+  all
+}
+
+// ==================== SERIES MODEL ====================
+model Series {
+  id          String  @id @default(cuid())
+  name        String
+  description String?
+  cadence     Cadence @default(weekly)
+
+  personaOverrides Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  templateId String?
+  template   Template? @relation(fields: [templateId], references: [id])
+  episodes   Episode[]
+
+  @@index([userId])
+}
+
+enum Cadence {
+  daily
+  weekly
+  biweekly
+  monthly
+}
+
+// ==================== TEMPLATE MODEL ====================
+model Template {
+  id             String   @id @default(cuid())
+  name           String   @unique
+  description    String?
+  platform       Platform
+  language       String   @default("en")
+  durationTarget Int // Target duration in seconds
+
+  // Template Package (NEW)
+  templatePackageVersion String @default("1.0.0")
+  renderEngine           RenderEngine @default(ffmpeg_microcut_v2)
+  timelineSpec           Json // TemplateTimelineSpec
+  layoutSpec             Json // TemplateLayoutSpec
+  slotRequirements       Json // TemplateSlotRequirements
+  styleSpec              Json // TemplateStyleSpec
+  motionSpec             Json // TemplateMotionSpec
+
+  // Legacy fields (for backward compatibility)
+  canonicalScript String?
+  scriptStructure Json?
+  editingRecipe   Json?
+
+  // Categorization
+  personaTags String[] @default([])
+  niche       String?
+  tone        String?
+
+  // Performance
+  viewCount     Int    @default(0)
+  retentionRate Float?
+  saveRate      Float?
+
+  // Embedding (for semantic search)
+  embeddingId String? @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  series   Series[]
+  episodes Episode[]
+
+  @@index([platform])
+  @@index([niche])
+}
+
+// ==================== EPISODE MODEL ====================
+model Episode {
+  id     String        @id @default(cuid())
+  title  String
+  status EpisodeStatus @default(draft)
+
+  // Template reference
+  templateId      String?
+  templateVersion String?
+  mode            EpisodeMode @default(template_copy)
+
+  // Script
+  scriptContent String?
+  scriptBeats   Json? // Beat-aligned script structure
+
+  // Raw voiceover (before cleaning) - Phase 1.1
+  rawVoiceoverS3Key      String?
+  rawVoiceoverMuxAssetId String?
+  rawVoiceoverDuration   Float?
+
+  // Cleaned voiceover (after silence/filler removal) - Phase 1.4
+  cleanVoiceoverS3Key      String?
+  cleanVoiceoverMuxAssetId String?
+  cleanVoiceoverPlaybackId String?
+  cleanVoiceoverDuration   Float? // MASTER DURATION
+
+  // Word-level transcript - Phase 1.2 (raw from Deepgram)
+  wordTranscript Json?
+  // Corrected transcript aligned to cleaned voiceover
+  correctedWordTranscript Json?
+  // Exact Deepgram API response (no alteration) - for debugging and comparison
+  rawDeepgramResponse Json?
+
+  // Creative brief - Phase 3.5 (LLM-powered edit decisions)
+  creativeBrief Json? // Array of per-segment edit decisions from Creative Director LLM
+
+  // Cut plan - Phase 4 (MicroCutPlanV2)
+  cutPlan    Json?
+  // Render spec derived from the cut plan (ffmpeg input)
+  renderSpec Json?
+
+  // Template compilation data (slot plan, beat plan, candidates, etc.)
+  templateCompile Json?
+
+  // Final output - Phase 5
+  finalS3Key         String?
+  muxFinalAssetId    String?
+  muxFinalPlaybackId String?
+
+  // Quality metrics - Phase 3
+  matchCoverage     Float?
+  averageMatchScore Float?
+
+  // Cost tracking
+  estimatedCostUSD Float?
+  actualCostUSD    Float?
+
+  // Legacy fields (keep for backward compatibility)
+  voiceoverS3Key      String?
+  voiceoverPath       String?
+  voiceoverDuration   Float?
+  muxVoiceoverAssetId String?
+  muxClipAssetIds     String[] @default([])
+  rawClipPaths        String[] @default([])
+  proxyPaths          String[] @default([])
+  finalVideoPath      String?
+  thumbnailPath       String?
+  // Edit plan from transcript correction (used by voiceover_cleaning)
+  editPlan            Json?
+
+  // Metadata
+  duration    Float?
+  publishedAt DateTime?
+
+  // Render orchestration fields
+  revision           Int       @default(0)
+  renderRequested    Boolean   @default(false)
+  renderRequestedAt  DateTime?
+  renderJobId        String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  seriesId          String?
+  series            Series?            @relation(fields: [seriesId], references: [id])
+  userId            String
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  template          Template?          @relation(fields: [templateId], references: [id])
+  jobs              Job[]
+  activityEvents    ActivityEvent[]
+  slotClips         SlotClip[]
+  brollChunks       BrollChunk[]
+  voiceoverSegments VoiceoverSegment[]
+  keyterms         EpisodeKeyterm[]
+
+  @@index([userId])
+  @@index([seriesId])
+  @@index([status])
+  @@index([templateId])
+}
+
+// ==================== SCRIPT KEYTERMS ====================
+
+model Keyterm {
+  id             String          @id @default(cuid())
+  userId         String
+  term           String
+  normalizedTerm String
+  category       KeytermCategory @default(other)
+  language       String?
+  source         KeytermSource
+  usageCount     Int             @default(0)
+  lastUsedAt     DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  episodes EpisodeKeyterm[]
+
+  @@unique([userId, normalizedTerm])
+  @@index([userId])
+  @@index([userId, category])
+  @@index([normalizedTerm])
+}
+
+model EpisodeKeyterm {
+  id        String              @id @default(cuid())
+  episodeId String
+  keytermId String
+  source    EpisodeKeytermSource
+  confirmed Boolean             @default(false)
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+
+  episode Episode @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  keyterm  Keyterm @relation(fields: [keytermId], references: [id], onDelete: Cascade)
+
+  @@unique([episodeId, keytermId])
+  @@index([episodeId])
+  @@index([keytermId])
+}
+
+enum KeytermCategory {
+  company
+  product
+  jargon
+  non_english
+  person
+  location
+  other
+}
+
+enum KeytermSource {
+  user
+  llm
+}
+
+enum EpisodeKeytermSource {
+  user
+  matched
+  llm
+}
+
+enum EpisodeStatus {
+  /// Episode created, no voiceover uploaded yet.
+  draft
+  /// Raw voiceover upload complete; transcription queued.
+  voiceover_uploaded
+  /// Voiceover cleaning (silence/filler removal) in progress.
+  voiceover_cleaning
+  /// Clean voiceover ready; transcript aligned and units created.
+  voiceover_cleaned
+  /// Collecting required slot clips (A-roll/B-roll).
+  collecting_clips
+  /// Missing required slot clips.
+  needs_more_clips
+  /// Chunking slot clips into B-roll/A-roll units.
+  chunking_clips
+  /// AI enrichment + embeddings for chunks.
+  enriching_chunks
+  /// Semantic matching in progress.
+  matching
+  /// Cut plan validated and ready for render.
+  cut_plan_ready
+  /// FFmpeg render in progress.
+  rendering
+  /// Final render complete and available.
+  ready
+  /// Published externally (e.g., Mux publish step completed).
+  published
+  /// Pipeline failed.
+  failed
+}
+
+enum EpisodeMode {
+  template_copy
+  auto_edit
+}
+
+enum RenderEngine {
+  ffmpeg_microcut_v2
+}
+
+// ==================== SLOT CLIP MODEL (NEW) ====================
+model SlotClip {
+  id        String   @id @default(cuid())
+  episodeId String
+  slotId    String // Template slot identifier (e.g., "A1", "B2")
+  slotType  SlotType // A-roll, B-roll, screen, etc.
+
+  // Source tracking
+  source SlotSource // recorded vs uploaded
+
+  // Media (S3 canonical)
+  s3Key String
+
+  // Mux asset
+  muxAssetId    String?
+  muxPlaybackId String?
+
+  // Metadata
+  duration    Float?
+  fps         Int?
+  orientation VideoOrientation?
+  width       Int?
+  height      Int?
+
+  chunkCount       Int      @default(0)
+  aiTags           String[] @default([])
+  aiSummary        String?
+  aiEmbeddingsRef  String?
+  moderationStatus String?
+  selectedSegments Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  episode Episode      @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  chunks  BrollChunk[]
+
+  @@index([episodeId])
+  @@index([slotId])
+  @@index([slotType])
+}
+
+enum SlotType {
+  a_roll_face
+  b_roll_illustration
+  b_roll_action
+  screen_record
+  product_shot
+  pattern_interrupt
+  cta_overlay
+}
+
+enum SlotSource {
+  recorded // Recorded in-app
+  uploaded // Uploaded from device
+}
+
+enum VideoOrientation {
+  portrait
+  landscape
+  square
+}
+
+// ==================== B-ROLL CHUNK MODEL ====================
+model BrollChunk {
+  id         String @id @default(cuid())
+  episodeId  String
+  slotClipId String
+  chunkIndex Int
+
+  startMs    Int
+  endMs      Int
+  durationMs Int
+
+  s3Key         String?
+  muxAssetId    String?
+  muxPlaybackId String?
+  thumbnailUrl  String?
+
+  aiTags           String[] @default([])
+  aiSummary        String?
+  moderationStatus String?
+  moderationScores Json?
+
+  // pgvector embedding (3072 dimensions)
+  embedding     Unsupported("vector(3072)")?
+  embeddingText String?
+
+  qualityScore     Float?
+  motionScore      Float?
+  compositionScore Float?
+
+  matchedToSegmentId String?
+  matchScore         Float?
+  isUsedInFinalCut   Boolean @default(false)
+
+  // Metadata for storing transcript and other chunk-specific data
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  episode  Episode  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  slotClip SlotClip @relation(fields: [slotClipId], references: [id], onDelete: Cascade)
+
+  @@index([episodeId])
+  @@index([slotClipId])
+  @@index([chunkIndex])
+  @@index([matchedToSegmentId])
+}
+
+// ==================== VOICEOVER SEGMENT MODEL ====================
+model VoiceoverSegment {
+  id           String @id @default(cuid())
+  episodeId    String
+  segmentIndex Int
+
+  // Micro-unit label (<= 5 words) for UI/debug
+  text       String
+  startMs    Int
+  endMs      Int
+  durationMs Int
+  words      Json
+
+  keywords      String[]
+  emotionalTone String?
+
+  // pgvector embedding
+  embedding     Unsupported("vector(3072)")?
+  embeddingText String?
+
+  matchedChunkId String?
+  matchScore     Float?
+  // Stores per-unit candidates + scoring metadata
+  metadata       Json?
+
+  createdAt DateTime @default(now())
+
+  episode Episode @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+
+  @@index([episodeId])
+  @@index([segmentIndex])
+}
+
+// ==================== JOB MODEL ====================
+model Job {
+  id              String    @id @default(cuid())
+  type            JobType
+  status          JobStatus @default(pending)
+  stage           JobStage  @default(starting)
+  progress        Int       @default(0)
+  overallProgress Int       @default(0)
+
+  parentJobId String?
+  childJobIds String[] @default([])
+  batchId     String?
+  batchIndex  Int?
+  batchTotal  Int?
+
+  inputPaths String[] @default([])
+  outputPath String?
+  inputData  Json?
+  outputData Json?
+  metadata   Json?
+
+  errorMessage     String?
+  retryCount       Int     @default(0)
+  maxRetries       Int     @default(3)
+  estimatedCostUSD Float?
+  actualCostUSD    Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  // Relations
+  episodeId String?
+  episode   Episode? @relation(fields: [episodeId], references: [id])
+  activityEvents ActivityEvent[]
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([episodeId])
+  @@index([status])
+  @@index([type])
+  @@index([batchId])
+}
+
+enum JobType {
+  // Phase 1: Voiceover Processing
+  voiceover_ingest
+  voiceover_transcript
+  voiceover_transcript_correction
+  voiceover_take_selection
+  voiceover_silence_detection
+  voiceover_cleaning
+  voiceover_segmentation
+
+  // Phase 2: B-Roll Chunk Processing
+  broll_ingest
+  broll_chunking
+  broll_chunk_ingest
+  slot_clip_enrichment
+  broll_chunk_enrichment
+  broll_chunk_embedding
+  aroll_chunk_transcript
+  chunk_refinement
+
+  // Phase 3: Matching
+  semantic_matching
+
+  // Phase 3.5: Creative Edit Planning (LLM-powered)
+  creative_edit_plan
+
+  // Phase 4: Cut Planning
+  cut_plan_generation
+  cut_plan_validation
+
+  // Phase 5: Rendering
+  ffmpeg_render_microcut_v2
+  mux_publish
+}
+
+enum JobStage {
+  starting
+  downloading
+  uploading
+  processing
+  analyzing
+  building
+  rendering
+  publishing
+  done
+}
+
+enum JobStatus {
+  pending
+  processing
+  done
+  error
+  cancelled
+}
+
+model ActivityEvent {
+  id         String             @id
+  userId     String
+  episodeId  String?
+  jobId      String?
+  entityType ActivityEntityType
+  eventType  ActivityEventType
+  payload    Json
+  occurredAt DateTime           @default(now())
+  createdAt  DateTime           @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  episode Episode? @relation(fields: [episodeId], references: [id], onDelete: SetNull)
+  job     Job?     @relation(fields: [jobId], references: [id], onDelete: SetNull)
+
+  @@index([userId, occurredAt(sort: Desc)])
+  @@index([episodeId, occurredAt(sort: Desc)])
+  @@index([jobId, occurredAt(sort: Desc)])
+  @@index([eventType, occurredAt(sort: Desc)])
+}
+
+enum ActivityEntityType {
+  episode
+  job
+}
+
+enum ActivityEventType {
+  episode_status_changed
+  job_created
+  job_updated
+  job_completed
+  job_failed
+  job_cancelled
+}

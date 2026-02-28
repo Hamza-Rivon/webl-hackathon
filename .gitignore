@@ -317,6 +317,9 @@ nanobana-illustration/
 docs/
 
 # ==================== PROJECT SPECIFIC ====================
+# Admin dashboard (internal, not pushed to repo)
+apps/admin-dashboard/
+
 # Remotion cache
 apps/remotion/.cache/
 apps/remotion/node_modules/

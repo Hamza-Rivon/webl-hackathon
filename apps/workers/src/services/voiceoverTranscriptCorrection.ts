@@ -478,9 +478,10 @@ function buildCorrectionPrompt(args: {
   chunk: ScriptChunk;
   window: TranscriptWindow;
   keyterms: string[];
+  transcriptionProvider?: string;
 }): string {
   const scriptWords = args.chunk.words.map((w) => w.text);
-  const deepgramWords = args.window.words.map((w) => ({
+  const transcribedWords = args.window.words.map((w) => ({
     i: w.index,
     w: w.word,
     s: w.startMs,
@@ -488,16 +489,20 @@ function buildCorrectionPrompt(args: {
     c: Number((w.confidence ?? 1).toFixed(3)),
   }));
 
+  const confidenceNote = args.transcriptionProvider === 'voxtral'
+    ? '\n- Note: confidence values ("c") are unavailable from this transcription provider (all set to 1) — do not use them for quality decisions.'
+    : '';
+
   return `You are reconstructing a corrected word-level transcript for a scripted voiceover.
 
 Goal:
 - Output words must match the SCRIPT exactly (word-for-word, same order, same count).
-- Use Deepgram timestamps as anchors.
+- Use transcription timestamps as anchors.
 - Handle split or misheard words (e.g., "T so" -> "Tissot") by merging timestamps.
-- If a script word is missing in the Deepgram window, interpolate between neighboring timestamps.
+- If a script word is missing in the transcription window, interpolate between neighboring timestamps.
 - If multiple repeated takes exist, choose the single contiguous span that best matches the script.
   Prefer the most complete/clean take, usually the last complete take.
-- When the speaker restarts mid-sentence ("I always... uh... I always need..."), ignore false starts and anchor to the final fluent delivery.
+- When the speaker restarts mid-sentence ("I always... uh... I always need..."), ignore false starts and anchor to the final fluent delivery.${confidenceNote}
 
 Script chunk (text):
 ${args.chunk.text}
@@ -505,8 +510,8 @@ ${args.chunk.text}
 Script words (exact order, must output the same list):
 ${JSON.stringify(scriptWords)}
 
-Deepgram word window (indices + timestamps):
-${JSON.stringify(deepgramWords)}
+Transcription word window (indices + timestamps):
+${JSON.stringify(transcribedWords)}
 
 Keyterms (proper nouns/brands): ${args.keyterms.length > 0 ? args.keyterms.join(', ') : '[]'}
 
@@ -592,6 +597,7 @@ export async function reconstructTranscriptWithLlm(args: {
   scriptContent: string;
   transcriptWords: WordTimestamp[];
   keyterms?: string[];
+  transcriptionProvider?: string;
   logger?: typeof sharedLogger;
 }): Promise<{ correctedWords: WordTimestamp[]; stats: TranscriptCorrectionStats }> {
   const logger = args.logger ?? sharedLogger;
@@ -627,7 +633,7 @@ export async function reconstructTranscriptWithLlm(args: {
   for (const chunk of chunks) {
     const window = buildTranscriptWindow(chunk, normalizedTranscript, totalScriptWords);
     const defaultDurationMs = medianDuration(window.words);
-    const prompt = buildCorrectionPrompt({ chunk, window, keyterms });
+    const prompt = buildCorrectionPrompt({ chunk, window, keyterms, transcriptionProvider: args.transcriptionProvider });
 
     if (canCallLlm) {
       llmCallCount += 1;

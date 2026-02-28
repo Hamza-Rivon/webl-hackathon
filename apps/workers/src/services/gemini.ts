@@ -17,7 +17,7 @@
  * semantic_matching → cut_plan_generation (uses selectChunksForSegment) → cut_plan_validation
  * 
  * Provider Selection:
- * - Set AI_PROVIDER=gemini, AI_PROVIDER=openai, or AI_PROVIDER=runpod in environment variables
+ * - Set AI_PROVIDER=gemini, AI_PROVIDER=mistral, or AI_PROVIDER=runpod in environment variables
  * - Defaults to 'gemini' if not specified
  */
 
@@ -1087,7 +1087,7 @@ Consider visual continuity, semantic matching, and diversity.
  * Intelligently select and order chunks for a voiceover segment using AI
  *
  * IMPORTANT: Only ONE provider is used at a time based on AI_PROVIDER env var.
- * Set AI_PROVIDER=gemini, AI_PROVIDER=openai, or AI_PROVIDER=runpod in .env.
+ * Set AI_PROVIDER=gemini, AI_PROVIDER=mistral, or AI_PROVIDER=runpod in .env.
  * 
  * @param input - Segment, primary chunk, candidate chunks, and requirements
  * @returns Structured selection result with ordered chunks and reasoning

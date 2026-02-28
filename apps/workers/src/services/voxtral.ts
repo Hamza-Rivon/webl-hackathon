@@ -71,6 +71,7 @@ const EXTENSION_TO_FORMAT: Record<string, AudioFormat> = {
   aac: 'aac',
   m4a: 'm4a',
   mp4: 'mp4',
+  mov: 'mp4',
   opus: 'opus',
   pcm: 'pcm',
   mpeg: 'mpeg',
@@ -89,8 +90,8 @@ function detectAudioFormat(url: string): AudioFormat {
     logger.info('[Voxtral] detectAudioFormat: detected format from URL extension', { ext, format, url: url.slice(0, 120) });
     return format;
   }
-  logger.warn(`[Voxtral] detectAudioFormat: could not detect format from extension "${ext}", defaulting to wav`, { url: url.slice(0, 120) });
-  return 'wav';
+  logger.warn(`[Voxtral] detectAudioFormat: could not detect format from extension "${ext}", defaulting to pcm (will convert to mp3)`, { url: url.slice(0, 120) });
+  return 'pcm';
 }
 
 /** Run ffprobe to get audio duration in seconds */

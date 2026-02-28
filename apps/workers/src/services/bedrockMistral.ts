@@ -46,7 +46,7 @@ export async function callBedrockMistralChat(options: {
     messages: [{ role: 'user', content: [{ text: options.userPrompt }] }],
     ...(options.systemPrompt ? { system: [{ text: options.systemPrompt }] } : {}),
     inferenceConfig: {
-      maxTokens: options.maxTokens ?? 4096,
+      maxTokens: options.maxTokens ?? 16384,
       ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
     },
   });

@@ -1,7 +1,7 @@
 /**
  * Phase 1.3: Voiceover Transcript Correction Job
  *
- * Purpose: Use an LLM to correct Deepgram transcript and create an edit plan.
+ * Purpose: Use an LLM to correct the transcription (Deepgram/Voxtral) and create an edit plan.
  *
  * Pipeline Position: After voiceover_transcript
  * Dependencies: voiceover_transcript (must complete first)
@@ -115,6 +115,7 @@ export async function processVoiceoverTranscriptCorrection(
     const { correctedWords, stats } = await reconstructTranscriptWithLlm({
       scriptContent: episode.scriptContent,
       transcriptWords: rawWords,
+      transcriptionProvider: config.transcription.provider,
       logger,
     });
 
@@ -152,7 +153,7 @@ export async function processVoiceoverTranscriptCorrection(
     logger.info('[Phase 1.3] STORED: episode correctedWordTranscript (wordTranscript unchanged)', {
       episodeId,
       correctedWordTranscriptCount: correctedWords.length,
-      note: 'episode.wordTranscript still holds Phase 1.2 raw Deepgram output',
+      note: 'episode.wordTranscript still holds Phase 1.2 raw transcription output',
     });
     logger.info(`[VOICEOVER_TRACE_FULL] phase=1.3 step=STORED_episode_correctedWordTranscript episodeId=${episodeId} wordCount=${correctedWords.length} (next line = full words with timestamps, no truncation)`);
     logger.info(

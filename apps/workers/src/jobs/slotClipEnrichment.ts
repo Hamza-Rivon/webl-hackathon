@@ -15,6 +15,7 @@ import { config } from '../config.js';
 import { workflows } from '@mux/ai';
 import { s3Service } from '../services/s3.js';
 import { analyzeVideoWithRunpod } from '../services/runpodVideoAnalysis.js';
+import { analyzeVideoWithBedrock } from '../services/bedrockVideoAnalysis.js';
 
 interface SlotClipEnrichmentJobData {
   jobId: string;
@@ -119,14 +120,21 @@ export async function processSlotClipEnrichment(
       return;
     }
 
-    const useRunpod = config.ai.provider === 'runpod';
+    const videoProvider = config.videoAnalysis.provider;
+    const useRunpod = videoProvider === 'runpod';
+    const useBedrockPegasus = videoProvider === 'bedrock-pegasus';
 
     // Step 2: Get AI summary + moderation
+    const providerLabel = useRunpod
+      ? 'Runpod Qwen3-VL'
+      : useBedrockPegasus
+        ? 'Bedrock Pegasus'
+        : '@mux/ai';
     await updateProgress(
       jobId,
       'analyzing',
       10,
-      useRunpod ? 'Analyzing slot clip with Runpod Qwen3-VL' : 'Analyzing slot clip with @mux/ai'
+      `Analyzing slot clip with ${providerLabel}`
     );
 
     let aiResult: { tags: string[]; description: string };
@@ -169,6 +177,27 @@ export async function processSlotClipEnrichment(
         maxScores: runpodResult.moderationScores,
         exceedsThreshold: exceedsModerationThreshold(runpodResult.moderationScores),
       };
+    } else if (useBedrockPegasus) {
+      if (!slotClip?.s3Key) {
+        throw new Error(`Slot clip ${slotClipId} is missing s3Key for Bedrock Pegasus analysis`);
+      }
+
+      logger.info('[Bedrock][Pegasus][slot-clip-enrichment] request', {
+        model: config.videoAnalysis.bedrockPegasusModel,
+        region: config.videoAnalysis.bedrockPegasusRegion,
+        slotClipId,
+      });
+      await usageService.recordUsage(userId, { openAiChatCalls: 1 });
+
+      const bedrockResult = await analyzeVideoWithBedrock({ s3Key: slotClip.s3Key });
+      aiResult = {
+        tags: bedrockResult.tags,
+        description: bedrockResult.description,
+      };
+      moderationResult = {
+        maxScores: bedrockResult.moderationScores,
+        exceedsThreshold: exceedsModerationThreshold(bedrockResult.moderationScores),
+      };
     } else {
       await usageService.recordUsage(userId, {
         muxAiSummaryCalls: 1,
@@ -197,7 +226,7 @@ export async function processSlotClipEnrichment(
     }
 
     logger.info(`Received AI analysis for slot clip:`, {
-      provider: useRunpod ? 'runpod' : 'mux',
+      provider: useRunpod ? 'runpod' : useBedrockPegasus ? 'bedrock-pegasus' : 'mux',
       tags: aiResult.tags,
       description: aiResult.description,
       maxScores: moderationResult.maxScores,

@@ -77,6 +77,27 @@ export const config = {
     apiKey: process.env.VLLM_API_KEY || '',
   },
 
+  // Video Analysis Provider
+  // AI_PROVIDER=runpod forces video analysis to 'runpod' (overrides VIDEO_ANALYSIS_PROVIDER)
+  // Otherwise falls back to VIDEO_ANALYSIS_PROVIDER env or 'mux'
+  videoAnalysis: {
+    provider: (
+      (process.env.AI_PROVIDER || 'gemini').toLowerCase() === 'runpod'
+        ? 'runpod'
+        : (process.env.VIDEO_ANALYSIS_PROVIDER || 'mux').toLowerCase()
+    ) as 'runpod' | 'bedrock-pegasus' | 'mux',
+    bedrockPegasusModel:
+      process.env.AWS_BEDROCK_PEGASUS_MODEL || 'us.twelvelabs.pegasus-1-2-v1:0',
+    bedrockFallbackModels: (
+      process.env.AWS_BEDROCK_VIDEO_FALLBACK_MODELS || 'amazon.nova-premier-v1:0,amazon.nova-pro-v1:0'
+    ).split(',').map((m) => m.trim()).filter(Boolean),
+    bedrockPegasusRegion:
+      process.env.AWS_BEDROCK_PEGASUS_REGION ||
+      process.env.AWS_BEDROCK_REGION ||
+      process.env.AWS_REGION ||
+      'us-east-1',
+  },
+
   // Transcription provider selection: 'deepgram' | 'voxtral' (default: 'voxtral')
   transcription: {
     provider: (process.env.TRANSCRIPTION_PROVIDER || 'voxtral').toLowerCase() as

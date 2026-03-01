@@ -28,6 +28,7 @@ import { config } from '../config.js';
 import { usageService } from '../services/usage.js';
 import { s3Service } from '../services/s3.js';
 import { analyzeVideoWithRunpod } from '../services/runpodVideoAnalysis.js';
+import { analyzeVideoWithBedrock } from '../services/bedrockVideoAnalysis.js';
 
 // Import @mux/ai workflows
 import { workflows } from '@mux/ai';
@@ -165,20 +166,25 @@ export async function processBrollChunkEnrichment(
 
       logger.info(`Chunk ${chunkIndex} inherited AI data from slot clip with position context`);
     } else {
-      // Phase 2.4: Refinement mode - full chunk-level analysis (Mux AI or Runpod Qwen3-VL)
-      const useRunpod = config.ai.provider === 'runpod';
-      if (!useRunpod && !muxAssetId) {
-        throw new Error(`muxAssetId required for refinement mode when not using Runpod`);
+      // Phase 2.4: Refinement mode - full chunk-level analysis (Mux AI, Runpod Qwen3-VL, or Bedrock Pegasus)
+      const videoProvider = config.videoAnalysis.provider;
+      const useRunpod = videoProvider === 'runpod';
+      const useBedrockPegasus = videoProvider === 'bedrock-pegasus';
+      if (!useRunpod && !useBedrockPegasus && !muxAssetId) {
+        throw new Error(`muxAssetId required for refinement mode when not using Runpod or Bedrock Pegasus`);
       }
 
       // Step 1: Get AI summary and tags (10-50%)
+      const providerLabel = useRunpod
+        ? 'Runpod Qwen3-VL'
+        : useBedrockPegasus
+          ? 'Bedrock Pegasus'
+          : '@mux/ai';
       await updateProgress(
         jobId,
         'analyzing',
         10,
-        useRunpod
-          ? 'Analyzing chunk with Runpod Qwen3-VL (tags & summary)'
-          : 'Analyzing chunk with @mux/ai (tags & summary)'
+        `Analyzing chunk with ${providerLabel} (tags & summary)`
       );
 
       // Check if this is an A-roll chunk (has audio/transcript)
@@ -248,6 +254,35 @@ export async function processBrollChunkEnrichment(
           maxScores: runpodResult.moderationScores,
           exceedsThreshold: exceedsModerationThreshold(runpodResult.moderationScores),
         };
+      } else if (useBedrockPegasus) {
+        if (!chunk?.s3Key) {
+          throw new Error(`Chunk ${chunkId} is missing s3Key for Bedrock Pegasus analysis`);
+        }
+
+        logger.info('[Bedrock][Pegasus][chunk-enrichment] request', {
+          model: config.videoAnalysis.bedrockPegasusModel,
+          region: config.videoAnalysis.bedrockPegasusRegion,
+          chunkId,
+          chunkIndex,
+          isARollChunk,
+        });
+        await usageService.recordUsage(userId, {
+          openAiChatCalls: 1,
+        });
+
+        const bedrockResult = await analyzeVideoWithBedrock({
+          s3Key: chunk.s3Key,
+          transcript: isARollChunk && transcript ? transcript : null,
+        });
+
+        aiResult = {
+          tags: bedrockResult.tags,
+          description: bedrockResult.description,
+        };
+        moderationResult = {
+          maxScores: bedrockResult.moderationScores,
+          exceedsThreshold: exceedsModerationThreshold(bedrockResult.moderationScores),
+        };
       } else {
         logger.info(`Calling @mux/ai getSummaryAndTags for asset ${muxAssetId} (refinement mode)`);
 
@@ -279,7 +314,7 @@ export async function processBrollChunkEnrichment(
       }
 
       logger.info(`Received AI analysis for chunk ${chunkIndex} (refinement):`, {
-        provider: useRunpod ? 'runpod' : 'mux',
+        provider: useRunpod ? 'runpod' : useBedrockPegasus ? 'bedrock-pegasus' : 'mux',
         tags: aiResult.tags,
         description: aiResult.description,
       });
@@ -290,7 +325,7 @@ export async function processBrollChunkEnrichment(
       await updateProgress(jobId, 'analyzing', 50, 'Running content moderation');
 
       logger.info(`Received moderation scores for chunk ${chunkIndex}:`, {
-        provider: useRunpod ? 'runpod' : 'mux',
+        provider: useRunpod ? 'runpod' : useBedrockPegasus ? 'bedrock-pegasus' : 'mux',
         maxScores: moderationResult.maxScores,
         exceedsThreshold: moderationResult.exceedsThreshold,
       });

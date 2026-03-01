@@ -28,7 +28,7 @@ const LIMITS = {
   maxClipsPerEpisode: 30,
   maxFileSizeBytes: 500 * 1024 * 1024,
   minClipDuration: 2,
-  maxClipDuration: 60,
+  maxClipDuration: 80,
 };
 
 const SLOT_LABELS: Record<SlotType, string> = {

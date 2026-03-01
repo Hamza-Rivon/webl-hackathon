@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import { config } from '../config.js';
 
 export type AiProvider = 'gemini' | 'openai' | 'runpod' | 'mistral';
+export type VideoAnalysisProvider = 'runpod' | 'bedrock-pegasus' | 'mux';
 
 function normalizeBaseUrl(url: string): string {
   return (url || '').replace(/\/+$/, '');
@@ -111,4 +112,36 @@ export function getOpenAiCompatibleClient(
   }
 
   return new OpenAI({ apiKey: config.openai.apiKey });
+}
+
+export function getVideoAnalysisProvider(): VideoAnalysisProvider {
+  return config.videoAnalysis.provider;
+}
+
+export function getVideoAnalysisLogContext(): {
+  provider: VideoAnalysisProvider;
+  model: string;
+  endpointHost: string | null;
+} {
+  const provider = config.videoAnalysis.provider;
+  if (provider === 'runpod') {
+    const baseUrl = getRunpodV1BaseUrl();
+    return {
+      provider,
+      model: config.vllm.model,
+      endpointHost: baseUrl ? toHostOnly(baseUrl) : null,
+    };
+  }
+  if (provider === 'bedrock-pegasus') {
+    return {
+      provider,
+      model: config.videoAnalysis.bedrockPegasusModel,
+      endpointHost: `bedrock.${config.videoAnalysis.bedrockPegasusRegion}`,
+    };
+  }
+  return {
+    provider,
+    model: 'mux-ai',
+    endpointHost: null,
+  };
 }

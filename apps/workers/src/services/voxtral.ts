@@ -50,17 +50,19 @@ Rules:
 - "duration" is the total audio duration in seconds
 - Do not skip any words
 - Preserve the original language
-- Transcribe the ENTIRE audio from start to finish — do not stop early`;
+- CRITICAL: You MUST transcribe the ENTIRE audio from the very first word to the very last word. Do NOT stop early. Continue transcribing until there is absolutely no more speech in the audio. If the audio is 30 seconds long, your last word timestamp must be near the 30 second mark.`;
 
 /** Formats that Bedrock Voxtral actually accepts */
 const BEDROCK_SUPPORTED_FORMATS = new Set<AudioFormat>(['mp3', 'wav']);
 
-/** Max chunk duration in seconds — increased to 2 minutes for longer recordings */
-const MAX_CHUNK_SECONDS = 120;
+/** Max chunk duration in seconds — kept short so Voxtral doesn't stop transcribing early */
+const MAX_CHUNK_SECONDS = 30;
 /** If a chunk fails with malformed/truncated JSON, split recursively down to this duration */
-const MIN_ADAPTIVE_CHUNK_SECONDS = 20;
-/** Maximum recursive split depth for a single failing chunk (120 -> 60 -> 30 -> 15s) */
+const MIN_ADAPTIVE_CHUNK_SECONDS = 10;
+/** Maximum recursive split depth for a single failing chunk (30 -> 15 -> ~8s) */
 const MAX_ADAPTIVE_SPLIT_DEPTH = 3;
+/** Minimum coverage ratio — if transcription covers less than this fraction of chunk duration, retry with smaller chunks */
+const MIN_COVERAGE_RATIO = 0.85;
 
 const EXTENSION_TO_FORMAT: Record<string, AudioFormat> = {
   wav: 'wav',
@@ -282,8 +284,16 @@ function getClient(): BedrockRuntimeClient {
 
 interface VoxtralWord {
   word?: string;
+  text?: string;
   start?: number;
   end?: number;
+  start_time?: number;
+  end_time?: number;
+  startTime?: number;
+  endTime?: number;
+  begin?: number;
+  finish?: number;
+  [key: string]: unknown;
 }
 
 interface VoxtralJsonResponse {
@@ -303,7 +313,20 @@ function extractJsonPayload(text: string): string {
   const lastArrayBrace = cleaned.lastIndexOf(']');
   const lastBrace = Math.max(lastObjectBrace, lastArrayBrace);
   if (firstBrace >= 0 && lastBrace > firstBrace) {
-    return cleaned.slice(firstBrace, lastBrace + 1);
+    let payload = cleaned.slice(firstBrace, lastBrace + 1);
+
+    // Repair truncated JSON arrays: if starts with [ but ends with } (no closing ]),
+    // the model output was truncated mid-array. Close it.
+    if (payload.startsWith('[') && !payload.endsWith(']')) {
+      // Remove any trailing incomplete object (e.g. `{"word":"hel` )
+      const lastCompleteObj = payload.lastIndexOf('}');
+      if (lastCompleteObj > 0) {
+        payload = payload.slice(0, lastCompleteObj + 1) + ']';
+        logger.warn('[Voxtral] extractJsonPayload: repaired truncated JSON array');
+      }
+    }
+
+    return payload;
   }
 
   return cleaned;
@@ -314,12 +337,19 @@ function parseVoxtralResponse(text: string): VoxtralJsonResponse {
   const parsed = JSON.parse(cleaned) as unknown;
 
   if (Array.isArray(parsed)) {
-    // Some Voxtral responses are wrapped as [{ words: [...], duration: ... }]
-    const first = parsed[0] as VoxtralJsonResponse | undefined;
-    if (!first || (!Array.isArray(first.words) && !Number.isFinite(first.duration))) {
-      throw new Error('Voxtral JSON array response does not contain a valid transcription object');
+    // Case 1: Wrapped as [{ words: [...], duration: ... }]
+    const first = parsed[0] as VoxtralJsonResponse | VoxtralWord | undefined;
+    if (first && (Array.isArray((first as VoxtralJsonResponse).words) || Number.isFinite((first as VoxtralJsonResponse).duration))) {
+      return first as VoxtralJsonResponse;
     }
-    return first;
+
+    // Case 2: Flat array of word objects [{word, start, end}, ...]
+    if (first && typeof (first as VoxtralWord).word === 'string' && Number.isFinite((first as VoxtralWord).start)) {
+      logger.info('[Voxtral] parseResponse: converting flat word array to structured response', { wordCount: parsed.length });
+      return { words: parsed as VoxtralWord[] };
+    }
+
+    throw new Error('Voxtral JSON array response does not contain a valid transcription object');
   }
 
   if (!parsed || typeof parsed !== 'object') {
@@ -333,23 +363,92 @@ function sanitizeWord(value: string): string {
   return value.replace(/[.,!?;:'"()[\]{}<>]/g, '');
 }
 
+/**
+ * Parse a timestamp value that may be a number, numeric string, or time string (MM:SS.ms / HH:MM:SS.ms).
+ * Returns seconds as a number, or NaN if unparseable.
+ */
+function parseTimestamp(value: unknown): number {
+  if (typeof value === 'number') return value;
+  if (value == null) return NaN;
+  if (typeof value !== 'string') return NaN;
+
+  const trimmed = value.trim();
+  // Try direct numeric parse (e.g. "0.50", "12.34")
+  const num = Number(trimmed);
+  if (!isNaN(num)) return num;
+
+  // Try time format: MM:SS.ms or HH:MM:SS.ms
+  const parts = trimmed.split(':');
+  if (parts.length === 2) {
+    const mins = parseFloat(parts[0]!);
+    const secs = parseFloat(parts[1]!);
+    if (!isNaN(mins) && !isNaN(secs)) return mins * 60 + secs;
+  } else if (parts.length === 3) {
+    const hours = parseFloat(parts[0]!);
+    const mins = parseFloat(parts[1]!);
+    const secs = parseFloat(parts[2]!);
+    if (!isNaN(hours) && !isNaN(mins) && !isNaN(secs)) return hours * 3600 + mins * 60 + secs;
+  }
+
+  return NaN;
+}
+
+/** Extract word text from a Voxtral word object, trying common property names */
+function extractWordText(w: VoxtralWord): string {
+  return String(w.word ?? w.text ?? '');
+}
+
+/** Extract start/end timestamps in seconds from a Voxtral word object */
+function extractTimings(w: VoxtralWord): { startSec: number; endSec: number } | null {
+  const rawStart = w.start ?? w.start_time ?? w.startTime ?? w.begin;
+  const rawEnd = w.end ?? w.end_time ?? w.endTime ?? w.finish;
+
+  const startSec = parseTimestamp(rawStart);
+  const endSec = parseTimestamp(rawEnd);
+
+  if (Number.isFinite(startSec) && Number.isFinite(endSec)) {
+    return { startSec, endSec };
+  }
+  return null;
+}
+
 /** Normalize raw Voxtral words into WordTimestamp[], applying offset for chunks */
 function normalizeWords(rawWords: VoxtralWord[], offsetMs: number): WordTimestamp[] {
+  // Log first 2 raw words for debugging format issues
+  if (rawWords.length > 0) {
+    logger.info('[Voxtral] normalizeWords: raw word samples', {
+      firstWord: JSON.stringify(rawWords[0]),
+      secondWord: rawWords[1] ? JSON.stringify(rawWords[1]) : null,
+      sampleKeys: rawWords[0] ? Object.keys(rawWords[0]) : [],
+    });
+  }
+
   let droppedEmpty = 0;
   let droppedInvalidTiming = 0;
 
   const words = rawWords
     .map((w): WordTimestamp | null => {
-      const rawText = w.word ?? '';
+      const rawText = extractWordText(w);
       const cleaned = sanitizeWord(rawText).trim();
       if (!cleaned) { droppedEmpty++; return null; }
 
-      const startMs = Math.round((w.start ?? 0) * 1000) + offsetMs;
-      const endMs = Math.round((w.end ?? 0) * 1000) + offsetMs;
-
-      if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+      const timings = extractTimings(w);
+      if (!timings) {
         droppedInvalidTiming++;
         return null;
+      }
+
+      const startMs = Math.round(timings.startSec * 1000) + offsetMs;
+      let endMs = Math.round(timings.endSec * 1000) + offsetMs;
+
+      if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
+        droppedInvalidTiming++;
+        return null;
+      }
+
+      // Allow equal timestamps — assign minimum 1ms duration
+      if (endMs <= startMs) {
+        endMs = startMs + 1;
       }
 
       return { word: cleaned, startMs, endMs, confidence: 1 };
@@ -380,7 +479,7 @@ interface ChunkResult {
 class VoxtralChunkRetryableError extends Error {
   constructor(
     message: string,
-    readonly reason: 'invalid_json' | 'max_tokens' | 'empty_response'
+    readonly reason: 'invalid_json' | 'max_tokens' | 'empty_response' | 'low_coverage'
   ) {
     super(message);
     this.name = 'VoxtralChunkRetryableError';
@@ -388,12 +487,13 @@ class VoxtralChunkRetryableError extends Error {
 }
 
 /**
- * Transcribe a single audio chunk (must be mp3/wav, <=~55 seconds).
+ * Transcribe a single audio chunk (must be mp3/wav).
  */
 async function transcribeChunk(
   audioBytes: Uint8Array,
   offsetSeconds: number,
-  tag: string
+  tag: string,
+  expectedDurationSeconds?: number
 ): Promise<ChunkResult> {
   const scopedTag = tag ? `[${tag}]` : '';
 
@@ -476,14 +576,36 @@ async function transcribeChunk(
   const offsetMs = Math.round(offsetSeconds * 1000);
   const words = normalizeWords(rawWords, offsetMs);
 
+  // Check coverage: if transcription ends much earlier than expected, treat as truncated
+  const lastWordEndSec = words.length > 0
+    ? (words[words.length - 1]!.endMs - Math.round(offsetSeconds * 1000)) / 1000
+    : 0;
+  const effectiveExpected = expectedDurationSeconds ?? (parsed.duration ?? 0);
+  const coverageRatio = effectiveExpected > 0 ? lastWordEndSec / effectiveExpected : 1;
+
   logger.info(`[Voxtral] ${scopedTag} transcription done`, {
     rawWordCount: rawWords.length,
     normalizedWordCount: words.length,
     chunkDuration: parsed.duration ?? null,
     offsetSeconds,
+    lastWordEndSec: lastWordEndSec.toFixed(2),
+    expectedDurationSec: effectiveExpected.toFixed(2),
+    coverageRatio: coverageRatio.toFixed(2),
     firstWord: words[0] ? { word: words[0].word, startMs: words[0].startMs } : null,
     lastWord: words.length > 0 ? { word: words[words.length - 1]!.word, endMs: words[words.length - 1]!.endMs } : null,
   });
+
+  if (effectiveExpected > 3 && coverageRatio < MIN_COVERAGE_RATIO) {
+    logger.warn(`[Voxtral] ${scopedTag} LOW COVERAGE: transcription only covers ${(coverageRatio * 100).toFixed(0)}% of audio (${lastWordEndSec.toFixed(1)}s / ${effectiveExpected.toFixed(1)}s)`, {
+      coverageRatio,
+      lastWordEndSec,
+      expectedDurationSec: effectiveExpected,
+    });
+    throw new VoxtralChunkRetryableError(
+      `Voxtral transcription coverage too low (${(coverageRatio * 100).toFixed(0)}%) ${scopedTag}`,
+      'low_coverage'
+    );
+  }
 
   return {
     words,
@@ -562,7 +684,7 @@ async function transcribeChunkWithAdaptiveSplit(
   depth = 0
 ): Promise<ChunkResult[]> {
   try {
-    const result = await transcribeChunk(chunk.bytes, chunk.offsetSeconds, tag);
+    const result = await transcribeChunk(chunk.bytes, chunk.offsetSeconds, tag, chunk.durationSeconds);
     return [result];
   } catch (error) {
     const retryable = error instanceof VoxtralChunkRetryableError;

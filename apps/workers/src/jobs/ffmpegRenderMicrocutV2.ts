@@ -115,6 +115,7 @@ export async function processFfmpegRenderMicrocutV2(
       transcriptWordCount: transcriptWords.length,
       captionsEnabled,
       captionCueCount: captionCues.length,
+      sampleFilter: captionFilters[0]?.slice(0, 200) ?? null,
     });
 
     await updateProgress(jobId, 'processing', 20, 'Downloading voiceover');
@@ -362,7 +363,7 @@ function concatClips(listPath: string, outputPath: string, fps: number): Promise
   });
 }
 
-function muxAudio(args: {
+async function muxAudio(args: {
   videoPath: string;
   audioPath: string;
   outputPath: string;
@@ -370,33 +371,65 @@ function muxAudio(args: {
   fps: number;
   captionFilters: string[];
 }): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const command = ffmpeg()
-      .input(args.videoPath)
-      .input(args.audioPath)
-      .audioFilters([`apad=pad_dur=${args.durationSec}`]);
+  const tempFiles: string[] = [];
+
+  try {
+    const outputOpts: string[] = [
+      '-map 0:v:0',
+      '-map 1:a:0',
+      `-t ${args.durationSec}`,
+      `-r ${args.fps}`,
+      '-vsync cfr',
+      '-c:v libx264',
+      '-preset veryfast',
+      '-pix_fmt yuv420p',
+      '-c:a aac',
+      // Audio padding as manual option — avoids fluent-ffmpeg's
+      // .audioFilters() which can conflict with -filter_script:v
+      // when multiple inputs are present.
+      '-af', `apad=pad_dur=${args.durationSec}`,
+      '-movflags +faststart',
+    ];
 
     if (args.captionFilters.length > 0) {
-      command.videoFilters(args.captionFilters);
+      // Write the drawtext filter chain to a temp file and use
+      // -filter_script:v to load it. This avoids:
+      //  1. Command-line escaping issues with 50+ drawtext filters
+      //  2. fluent-ffmpeg splitting option strings on spaces
+      // Prepend format=yuv420p to lock the pixel format before the
+      // drawtext chain — prevents "Error reinitializing filters"
+      // caused by format negotiation when enable=between() toggles.
+      const filterScript = `/tmp/caption_filter_${Date.now()}.txt`;
+      tempFiles.push(filterScript);
+      const filterGraph = `format=yuv420p,${args.captionFilters.join(',')}`;
+      await writeFile(filterScript, filterGraph);
+      logger.info('[Phase 5.2] Caption filter script written', {
+        path: filterScript,
+        filterCount: args.captionFilters.length,
+        graphLength: filterGraph.length,
+      });
+      outputOpts.unshift('-filter_script:v', filterScript);
     }
 
-    command
-      .outputOptions([
-        '-map 0:v:0',
-        '-map 1:a:0',
-        `-t ${args.durationSec}`,
-        `-r ${args.fps}`,
-        '-vsync cfr',
-        '-c:v libx264',
-        '-preset veryfast',
-        '-pix_fmt yuv420p',
-        '-c:a aac',
-        '-movflags +faststart',
-      ])
-      .on('end', () => resolve())
-      .on('error', (err) => reject(err))
-      .save(args.outputPath);
-  });
+    await new Promise<void>((resolve, reject) => {
+      ffmpeg()
+        .input(args.videoPath)
+        // Disable filter reinitialization — all clips are already
+        // normalised to the same size/format by renderClip, so no
+        // legitimate reinit is needed.  Prevents spurious
+        // "Error reinitializing filters" from drawtext enable toggles.
+        .inputOptions(['-reinit_filter 0'])
+        .input(args.audioPath)
+        .outputOptions(outputOpts)
+        .on('end', () => resolve())
+        .on('error', (err) => reject(err))
+        .save(args.outputPath);
+    });
+  } finally {
+    for (const f of tempFiles) {
+      await unlink(f).catch(() => {});
+    }
+  }
 }
 
 function normalizeTranscriptWords(rawTranscript: unknown, maxDurationMs: number): TranscriptWord[] {
@@ -404,7 +437,9 @@ function normalizeTranscriptWords(rawTranscript: unknown, maxDurationMs: number)
 
   return rawTranscript
     .map((entry) => {
-      const word = typeof entry?.word === 'string' ? entry.word.trim() : '';
+      const word = typeof entry?.word === 'string'
+        ? entry.word.replace(/[^\x20-\x7E]/g, '').trim()
+        : '';
       const startMs = Number(entry?.startMs);
       const endMs = Number(entry?.endMs);
 
@@ -517,7 +552,7 @@ function buildCaptionDrawtextFilters(
       'shadowx=2',
       'shadowy=2',
       `line_spacing=${lineSpacing}`,
-      `enable='between(t\\,${startSec}\\,${endSec})'`,
+      `enable=between(t\\,${startSec}\\,${endSec})`,
       'fix_bounds=1',
     ].join(':');
   });
@@ -585,19 +620,40 @@ function splitLongWord(word: string, maxCharsPerLine: number): string[] {
   return result;
 }
 
-function escapeDrawtextText(text: string): string {
+/**
+ * Strip non-ASCII and control characters that crash FFmpeg drawtext.
+ * Keeps printable ASCII (0x20–0x7E) and newlines only.
+ */
+function sanitizeForDrawtext(text: string): string {
   return text
+    .replace(/[^\x20-\x7E\n]/g, '')
+    .replace(/[ \t]+/g, ' ')
+    .trim();
+}
+
+/**
+ * Escape text for FFmpeg drawtext `text='...'` (single-quoted value).
+ *
+ * Inside single quotes in the FFmpeg filter-graph parser, only ' and \
+ * are special.  After un-quoting, drawtext interprets %{…} expansions
+ * and \n / \t sequences.
+ *
+ * Escaping layers applied here:
+ *  1. Sanitize to ASCII-only  (avoids font / encoding crashes)
+ *  2. \  →  \\   (filter-graph level)
+ *  3. '  →  \'   (filter-graph level)
+ *  4. %  →  %%   (drawtext text-expansion level)
+ *  5. Lines joined with literal \n  (drawtext interprets as newline)
+ */
+function escapeDrawtextText(text: string): string {
+  const safe = sanitizeForDrawtext(text);
+  return safe
     .split('\n')
     .map((line) =>
       line
         .replace(/\\/g, '\\\\')
-        .replace(/:/g, '\\:')
         .replace(/'/g, "\\'")
-        .replace(/,/g, '\\,')
-        .replace(/;/g, '\\;')
-        .replace(/\[/g, '\\[')
-        .replace(/\]/g, '\\]')
-        .replace(/%/g, '\\%')
+        .replace(/%/g, '%%')
         .trim()
     )
     .join('\\n')

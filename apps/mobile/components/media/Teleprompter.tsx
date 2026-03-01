@@ -99,10 +99,18 @@ export function Teleprompter({
   const totalDuration = beats.reduce((sum, beat) => sum + (beat.duration || 5), 0);
   const baseScrollDuration = totalDuration * 1000;
 
-  // Handle scroll animation
-  // Only auto-scroll if isPlaying is true AND manual scroll is not allowed
+  // Track whether user has manually overridden auto-scroll during recording
+  const [manualScrollOverride, setManualScrollOverride] = useState(false);
+
+  // Reset manual override when recording stops or starts
   useEffect(() => {
-    if (isPlaying && !allowManualScroll && contentHeight > containerHeight) {
+    setManualScrollOverride(false);
+  }, [isPlaying]);
+
+  // Handle scroll animation
+  // Only auto-scroll if isPlaying is true AND manual scroll is not allowed AND user hasn't overridden
+  useEffect(() => {
+    if (isPlaying && !allowManualScroll && !manualScrollOverride && contentHeight > containerHeight) {
       const scrollDistance = contentHeight - containerHeight + 100;
       const duration = baseScrollDuration / speed;
 
@@ -118,7 +126,7 @@ export function Teleprompter({
     } else if (!isPlaying || allowManualScroll) {
       cancelAnimation(scrollY);
     }
-  }, [isPlaying, allowManualScroll, contentHeight, containerHeight, speed, baseScrollDuration, onComplete]);
+  }, [isPlaying, allowManualScroll, manualScrollOverride, contentHeight, containerHeight, speed, baseScrollDuration, onComplete]);
 
   // Keep scroll on the UI thread for smoother movement and no interval jitter.
   useDerivedValue(() => {
@@ -155,9 +163,22 @@ export function Teleprompter({
     syncBeatFromOffset(offsetY);
   }, [scrollY, syncBeatFromOffset]);
 
+  // When user manually drags during recording, cancel auto-scroll so they can freely scroll
+  const handleScrollBeginDrag = useCallback(() => {
+    if (isPlaying && !allowManualScroll) {
+      cancelAnimation(scrollY);
+      setManualScrollOverride(true);
+    }
+  }, [isPlaying, allowManualScroll, scrollY]);
+
   // Scroll to specific beat when tapped
   const scrollToBeat = useCallback((index: number) => {
-    if ((!isPlaying || allowManualScroll) && beatPositions.current[index] !== undefined) {
+    if (beatPositions.current[index] !== undefined) {
+      // If tapping a beat during recording, cancel auto-scroll first
+      if (isPlaying && !allowManualScroll) {
+        cancelAnimation(scrollY);
+        setManualScrollOverride(true);
+      }
       triggerHaptic('selection');
       const targetY = Math.max(0, beatPositions.current[index] - containerHeight / 3);
       scrollY.value = withTiming(targetY, {
@@ -190,9 +211,10 @@ export function Teleprompter({
           showsVerticalScrollIndicator={false}
           bounces={false}
           alwaysBounceVertical={false}
-          scrollEnabled={!isPlaying || allowManualScroll}
+          scrollEnabled={true}
           scrollEventThrottle={16}
           onScroll={handleScroll}
+          onScrollBeginDrag={handleScrollBeginDrag}
           onContentSizeChange={(_, height) => setContentHeight(height)}
         >
           {/* Top padding for center alignment */}

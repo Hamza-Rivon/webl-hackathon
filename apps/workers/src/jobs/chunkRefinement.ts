@@ -66,12 +66,12 @@ export async function processChunkRefinement(
         },
       });
 
-      const useRunpod = config.ai.provider === 'runpod';
+      const videoProvider = config.videoAnalysis.provider;
       if (!chunk) {
         logger.warn(`Chunk ${chunkId} not found, skipping refinement`);
         continue;
       }
-      if (!useRunpod && !chunk?.muxAssetId) {
+      if (videoProvider === 'mux' && !chunk?.muxAssetId) {
         logger.warn(`Chunk ${chunkId} has no Mux asset ID, skipping refinement`);
         continue;
       }

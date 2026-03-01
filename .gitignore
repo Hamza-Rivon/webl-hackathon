@@ -305,7 +305,7 @@ temp/
 # Internal analysis, examples, architecture docs (do not push to public repos)
 CODEBASE_ANALYSIS.md
 GOOD-examples-episodes.md
-ARCHITECTURE.md
+#ARCHITECTURE.md
 MOBILE_UI_UX_EXECUTION_TASKS.md
 MOBILE_UI_UX_NEXT_WOW_TASKS.md
 apps/mobile/MOBILE_UI_UX_EXECUTION_TASKS.md
@@ -317,7 +317,7 @@ nanobana-illustration/
 docs/
 
 # Overview files (internal, not pushed)
-**/OVERVIEW.md
+#**/OVERVIEW.md
 
 # ==================== PROJECT SPECIFIC ====================
 # Admin dashboard (internal, not pushed to repo)
@@ -361,3 +361,6 @@ scripts/
 .env.aws
 env.example
 apps/scripts/
+
+pitch1.md
+PITCH.md

@@ -65,6 +65,31 @@ function validateAIProviderConfig() {
   
   // Log that only the selected provider will be used
   logger.info(`ℹ️  Only ${provider.toUpperCase()} will be used for chunk selection (other provider will be ignored)`);
+
+  // Validate video analysis provider
+  const videoProvider = config.videoAnalysis.provider;
+  if (videoProvider !== 'runpod' && videoProvider !== 'bedrock-pegasus' && videoProvider !== 'mux') {
+    throw new Error(
+      `Invalid VIDEO_ANALYSIS_PROVIDER="${videoProvider}". Must be "runpod", "bedrock-pegasus", or "mux".`
+    );
+  }
+
+  if (videoProvider === 'bedrock-pegasus') {
+    if (
+      !config.bedrock.bearerToken &&
+      !(config.bedrock.accessKeyId && config.bedrock.secretAccessKey)
+    ) {
+      throw new Error(
+        'VIDEO_ANALYSIS_PROVIDER is set to "bedrock-pegasus" but no AWS Bedrock credentials configured. ' +
+        'Please set AWS_BEARER_TOKEN_BEDROCK or AWS_BEDROCK_ACCESS_KEY_ID + AWS_BEDROCK_SECRET_ACCESS_KEY in your .env file.'
+      );
+    }
+    logger.info(`✅ Video Analysis: TwelveLabs Pegasus via Bedrock (model: ${config.videoAnalysis.bedrockPegasusModel}, region: ${config.videoAnalysis.bedrockPegasusRegion})`);
+  } else if (videoProvider === 'runpod') {
+    logger.info(`✅ Video Analysis: Runpod vLLM (model: ${config.vllm.model})`);
+  } else {
+    logger.info(`✅ Video Analysis: Mux AI`);
+  }
 }
 
 async function main() {

@@ -8,11 +8,13 @@ import {
   ViewStyle,
 } from 'react-native';
 import { borderRadius, colors, spacing, elevation, surfaceLevels } from '@/lib/theme';
+import { useTheme } from '@/contexts/ThemeContext';
 import { triggerHaptic } from '@/lib/haptics';
 
 export type CardVariant =
   | 'default'
   | 'elevated'
+  | 'glass'
   | 'pastelPink'
   | 'pastelBlue'
   | 'pastelGreen'
@@ -30,28 +32,6 @@ export interface CardProps extends Omit<ViewProps, 'style'> {
   style?: StyleProp<ViewStyle>;
 }
 
-const variantMap: Record<CardVariant, ViewStyle> = {
-  default: { backgroundColor: surfaceLevels.floating },
-  elevated: { backgroundColor: surfaceLevels.raised },
-  pastelPink: { backgroundColor: colors.pastel.pink },
-  pastelBlue: { backgroundColor: colors.pastel.blue },
-  pastelGreen: { backgroundColor: colors.pastel.green },
-  pastelYellow: { backgroundColor: colors.pastel.yellow },
-  pastelPurple: { backgroundColor: colors.pastel.purple },
-  pastelOrange: { backgroundColor: colors.pastel.orange },
-};
-
-function createCardStyle(variant: CardVariant, padding: keyof typeof spacing | number): StyleProp<ViewStyle> {
-  const value = typeof padding === 'number' ? padding : spacing[padding];
-
-  return [
-    styles.base,
-    variantMap[variant],
-    { padding: value },
-    variant === 'elevated' ? styles.elevated : styles.defaultShadow,
-  ];
-}
-
 export function Card({
   variant = 'default',
   pressable = false,
@@ -62,7 +42,29 @@ export function Card({
   style,
   ...props
 }: CardProps) {
-  const composed = [createCardStyle(variant, padding), style];
+  const { colors: tc, isDark } = useTheme();
+  const paddingValue = typeof padding === 'number' ? padding : spacing[padding];
+
+  const variantStyle: ViewStyle =
+    variant === 'glass'
+      ? {
+          backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.85)',
+          borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)',
+        }
+      : variant === 'elevated'
+        ? { backgroundColor: tc.panel }
+        : variant === 'default'
+          ? { backgroundColor: tc.surface }
+          : { backgroundColor: tc.pastel[variant.replace('pastel', '').toLowerCase() as keyof typeof tc.pastel] || tc.surface };
+
+  const composed: StyleProp<ViewStyle> = [
+    styles.base,
+    { borderColor: tc.border, padding: paddingValue },
+    variantStyle,
+    variant === 'elevated' ? styles.elevated : styles.defaultShadow,
+    variant === 'glass' && styles.glass,
+    style,
+  ];
 
   if (pressable) {
     return (
@@ -121,6 +123,10 @@ const styles = StyleSheet.create({
     ...elevation.low,
   },
   elevated: {
+    ...elevation.medium,
+  },
+  glass: {
+    borderWidth: 1,
     ...elevation.medium,
   },
   pressed: {

@@ -14,6 +14,7 @@ import Animated, {
   withSpring,
 } from 'react-native-reanimated';
 import { colors, typography, spacing, borderRadius } from '../../lib/theme';
+import { useTheme } from '../../contexts/ThemeContext';
 import {
   JOURNEY_STEPS,
   JourneyStep,

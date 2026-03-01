@@ -27,13 +27,13 @@ import {
   getEpisodeActionMatrix,
   getVisibleSections,
   sortJobsByPipelineOrder,
-  STAGE_LABELS,
   groupJobsByPhase,
 } from '@/lib/pipeline';
 import {
   Button,
   Card,
   EmptyState,
+  GlassCard,
   Input,
   Progress,
   Screen,
@@ -43,12 +43,12 @@ import {
   ConnectionBadge,
 } from '@/components/ui';
 import { PhaseIndicator, getPhaseFromStatus } from '@/components/episode/PhaseIndicator';
-import { AudioPlayer } from '@/components/media/AudioPlayer';
-import { VideoPlayer } from '@/components/media/VideoPlayer';
-import { colors } from '@/lib/theme';
+import { VoiceoverCompare } from '@/components/episode/VoiceoverCompare';
+import { ARollCompare } from '@/components/episode/ARollCompare';
+import { useTheme } from '@/contexts/ThemeContext';
 import { trackPrimaryAction, trackScreenView } from '@/lib/analytics';
 import { confirmAction } from '@/lib/confirm';
-import { styles } from '@/components/screens/episode-detail-screen.styles';
+import { createEpisodeDetailStyles } from '@/components/screens/episode-detail-screen.styles';
 import { ApiError } from '@/lib/api';
 import { isARollFirstTemplateWithFallback, getPrimaryARollSlotId } from '@/lib/templateWorkflow';
 
@@ -89,9 +89,12 @@ export default function EpisodeDetailScreen() {
   const { id, focus } = useLocalSearchParams<{ id: string; focus?: string | string[] }>();
   const router = useRouter();
   const pathname = usePathname();
+  const { colors, isDark } = useTheme();
   const isFocused = Boolean(id) && pathname === `/episode/${id}`;
   const focusValue = Array.isArray(focus) ? focus[0] : focus;
   const forceVoiceoverPreview = focusValue === 'voiceover';
+
+  const styles = useMemo(() => createEpisodeDetailStyles(colors, isDark), [colors, isDark]);
 
   const episodeQuery = useEpisode(id);
   const deleteEpisode = useDeleteEpisode();
@@ -150,7 +153,6 @@ export default function EpisodeDetailScreen() {
   const hasActiveJobs = jobs.some((job) => job.status === 'pending' || job.status === 'processing');
   const pipelineBusy = hasActiveJobs || startProcessing.isPending || episodeActions.requestRender.isPending;
 
-  // Detect A-roll-first template (camera+audio first, then B-roll)
   const arollFirstInfo = useMemo(() => {
     const slotReqs = (episode as any)?.template?.slotRequirements ?? null;
     const templateName = (episode as any)?.template?.name ?? null;
@@ -158,6 +160,21 @@ export default function EpisodeDetailScreen() {
     const primarySlotId = isArollFirst ? (getPrimaryARollSlotId(slotReqs) || 'A1') : null;
     return { isArollFirst, primarySlotId };
   }, [(episode as any)?.template?.slotRequirements, (episode as any)?.template?.name]);
+
+  // Find the original A-Roll playback ID.
+  // In A-roll-first workflow, the raw recording is uploaded to Mux via voiceover_ingest
+  // (not broll_ingest), so the playback ID lives on the Episode, not the SlotClip.
+  const originalARollPlaybackId = useMemo(() => {
+    if (!arollFirstInfo.isArollFirst || !episode) return null;
+    // Primary source: raw voiceover playback ID (same video file)
+    if (episode.rawVoiceoverPlaybackId) return episode.rawVoiceoverPlaybackId;
+    // Fallback: check slotClips in case broll_ingest ran
+    const slotClips = (episode as any)?.slotClips || [];
+    const arollClip = slotClips.find(
+      (clip: any) => clip.slotType === 'a_roll_face' || clip.slotId === arollFirstInfo.primarySlotId
+    );
+    return arollClip?.muxPlaybackId || null;
+  }, [arollFirstInfo, episode]);
 
   const sections = useMemo(() => getVisibleSections(status as EpisodeStatus), [status]);
 
@@ -174,7 +191,7 @@ export default function EpisodeDetailScreen() {
     [jobs]
   );
 
-  // --- Handlers (unchanged) ---
+  // --- Handlers ---
 
   const onSaveScript = async () => {
     if (!id) return;
@@ -295,10 +312,6 @@ export default function EpisodeDetailScreen() {
     }
   };
 
-  const handleBack = () => {
-    router.back();
-  };
-
   // --- Computed values ---
 
   const lastActionRejection = useMemo(() => {
@@ -333,7 +346,6 @@ export default function EpisodeDetailScreen() {
     }
 
     if (sections.voiceover && actionMatrix.voiceover_capture.allowed) {
-      // Block primary CTA during ElevenLabs generation
       if (elevenLabs.isGenerating) {
         return {
           label: 'Generating Voiceover...',
@@ -342,7 +354,6 @@ export default function EpisodeDetailScreen() {
           loading: true,
         };
       }
-      // A-roll-first templates: go directly to camera recording (video+audio)
       if (arollFirstInfo.isArollFirst && arollFirstInfo.primarySlotId) {
         return {
           label: 'Record A-Roll',
@@ -478,59 +489,52 @@ export default function EpisodeDetailScreen() {
         </View>
       </View>
 
-      {/* Phase Indicator — shown during active pipeline phases */}
+      {/* 3D Phase Indicator — shown during active pipeline phases */}
       {sections.phaseIndicator ? (
         <Animated.View entering={FadeInDown.duration(300)} exiting={FadeOutUp.duration(200)} layout={LinearTransition.springify()}>
-          <PhaseIndicator
-            currentPhase={currentPhase}
-            phaseProgress={phaseProgress}
-            isPhaseComplete={step === 'final'}
-            compact={false}
-            onPhasePress={handlePhasePress}
-          />
+          <GlassCard depth="medium" active={hasActiveJobs}>
+            <PhaseIndicator
+              currentPhase={currentPhase}
+              phaseProgress={phaseProgress}
+              isPhaseComplete={step === 'final'}
+              compact={false}
+              onPhasePress={handlePhasePress}
+            />
+          </GlassCard>
         </Animated.View>
       ) : null}
 
-      {/* Voiceover Preview — visible in voiceover/clips phases and when explicitly requested via phase click */}
+      {/* Voiceover Preview — with Original/Cleaned comparison tabs */}
       {(sections.voiceoverPreview || forceVoiceoverPreview) ? (
         <Animated.View entering={FadeInDown.duration(250)} exiting={FadeOutUp.duration(200)} layout={LinearTransition.springify()}>
-          <Card>
-            <Text style={styles.sectionTitle}>Voiceover Preview</Text>
-            {episode.activeVoiceoverPlaybackId ? (
-              <AudioPlayer
-                muxPlaybackId={episode.activeVoiceoverPlaybackId}
-                title="Cleaned Voiceover"
-                defaultExpanded={false}
-                transcriptWords={episode.correctedWordTranscript || episode.wordTranscript || []}
-                scriptText={episode.scriptContent || undefined}
-              />
-            ) : (
-              <Text style={styles.metaText}>
-                Cleaned voiceover is not available yet for this episode.
-              </Text>
-            )}
+          <GlassCard depth="subtle">
+            <VoiceoverCompare
+              originalPlaybackId={episode.rawVoiceoverPlaybackId || null}
+              cleanedPlaybackId={episode.activeVoiceoverPlaybackId || episode.cleanVoiceoverPlaybackId || null}
+              originalDuration={episode.rawVoiceoverDuration || null}
+              cleanedDuration={episode.cleanVoiceoverDuration || null}
+              originalTranscript={episode.wordTranscript || null}
+              cleanedTranscript={episode.correctedWordTranscript || episode.wordTranscript || null}
+              scriptText={episode.scriptContent || undefined}
+            />
 
-            {arollFirstInfo.isArollFirst && episode.arollCleanPreviewPlaybackId ? (
-              <View style={styles.arollVideoPreviewWrap}>
-                <Text style={styles.subSectionTitle}>Cleaned A-Roll Video</Text>
-                <VideoPlayer
-                  muxPlaybackId={episode.arollCleanPreviewPlaybackId}
-                  showControls
-                  enablePlaybackSpeed
-                  enableFullscreen
-                  contentFit="contain"
-                  aspectRatio={9 / 16}
-                />
-              </View>
+            {/* A-Roll Video Comparison */}
+            {arollFirstInfo.isArollFirst ? (
+              <ARollCompare
+                originalPlaybackId={originalARollPlaybackId}
+                cleanedPlaybackId={episode.arollCleanPreviewPlaybackId || null}
+                originalDuration={null}
+                cleanedDuration={episode.arollCleanPreviewDuration || null}
+              />
             ) : null}
-          </Card>
+          </GlassCard>
         </Animated.View>
       ) : null}
 
       {/* ============ PHASE: Script ============ */}
       {sections.script ? (
         <Animated.View entering={FadeInDown.duration(250)} exiting={FadeOutUp.duration(200)} layout={LinearTransition.springify()}>
-          <Card>
+          <GlassCard depth="subtle" enterDelay={50}>
             <Text style={styles.sectionTitle}>Script</Text>
             <View style={styles.stack}>
               <TextArea
@@ -573,18 +577,17 @@ export default function EpisodeDetailScreen() {
                 </Button>
               </View>
             </View>
-          </Card>
+          </GlassCard>
         </Animated.View>
       ) : null}
 
       {/* ============ PHASE: Voiceover capture ============ */}
       {sections.voiceover && episode.scriptContent?.trim() ? (
         <Animated.View entering={FadeInDown.duration(250).delay(80)} exiting={FadeOutUp.duration(200)} layout={LinearTransition.springify()}>
-          {/* ElevenLabs generation in progress — block all voiceover actions */}
           {elevenLabs.isGenerating ? (
-            <Card variant="pastelBlue">
+            <GlassCard depth="medium" glowColor="#0EA5A8" active>
               <View style={styles.blockingCard}>
-                <Ionicons name="volume-high-outline" size={32} color={colors.primary.DEFAULT} />
+                <Ionicons name="volume-high-outline" size={32} color={isDark ? '#5CF6FF' : colors.primary.DEFAULT} />
                 <Text style={styles.blockingText}>{elevenLabs.progress.message}</Text>
                 <View style={styles.elevenLabsProgressWrap}>
                   <Progress value={elevenLabs.progress.progress} size="sm" />
@@ -593,9 +596,9 @@ export default function EpisodeDetailScreen() {
                   Generating voiceover with ElevenLabs. Please wait and do not navigate away.
                 </Text>
               </View>
-            </Card>
+            </GlassCard>
           ) : (
-            <Card>
+            <GlassCard depth="subtle" enterDelay={80}>
               <Text style={styles.sectionTitle}>
                 {arollFirstInfo.isArollFirst ? 'A-Roll Recording' : 'Voiceover'}
               </Text>
@@ -631,7 +634,7 @@ export default function EpisodeDetailScreen() {
                   </>
                 )}
               </View>
-            </Card>
+            </GlassCard>
           )}
         </Animated.View>
       ) : null}
@@ -639,22 +642,22 @@ export default function EpisodeDetailScreen() {
       {/* ============ PHASE: Voiceover processing (blocking) ============ */}
       {step === 'voiceover' ? (
         <Animated.View entering={FadeInDown.duration(250)} exiting={FadeOutUp.duration(200)} layout={LinearTransition.springify()}>
-          <Card>
+          <GlassCard depth="medium" glowColor="#667EEA" active>
             <View style={styles.blockingCard}>
-              <Ionicons name="hourglass-outline" size={32} color={colors.primary.DEFAULT} />
+              <Ionicons name="hourglass-outline" size={32} color={isDark ? '#5CF6FF' : colors.primary.DEFAULT} />
               <Text style={styles.blockingText}>Processing your voiceover...</Text>
               <Text style={styles.blockingSubtext}>
                 Transcription, correction, and audio cleanup are running automatically.
               </Text>
             </View>
-          </Card>
+          </GlassCard>
         </Animated.View>
       ) : null}
 
       {/* ============ PHASE: Clips ============ */}
       {sections.clips ? (
         <Animated.View entering={FadeInDown.duration(250)} exiting={FadeOutUp.duration(200)} layout={LinearTransition.springify()}>
-          <Card>
+          <GlassCard depth="subtle" enterDelay={100}>
             <Text style={styles.sectionTitle}>Footage and Processing</Text>
             <View style={styles.stack}>
               <Button
@@ -684,7 +687,10 @@ export default function EpisodeDetailScreen() {
                   value={captionsEnabled}
                   onValueChange={handleToggleCaptions}
                   disabled={updateEpisode.isPending}
-                  trackColor={{ false: '#3e3e3e', true: colors.primary.DEFAULT }}
+                  trackColor={{
+                    false: isDark ? '#3e3e3e' : '#DEE2E6',
+                    true: isDark ? '#5CF6FF' : colors.primary.DEFAULT,
+                  }}
                   thumbColor="#FFFFFF"
                 />
               </View>
@@ -707,14 +713,14 @@ export default function EpisodeDetailScreen() {
                 </Text>
               ) : null}
             </View>
-          </Card>
+          </GlassCard>
         </Animated.View>
       ) : null}
 
       {/* ============ PHASE: Processing ============ */}
       {sections.processing ? (
         <Animated.View entering={FadeInDown.duration(250)} exiting={FadeOutUp.duration(200)} layout={LinearTransition.springify()}>
-          <Card>
+          <GlassCard depth="medium" active={hasActiveJobs} glowColor="#4FACFE">
             <Text style={styles.sectionTitle}>Processing</Text>
             <View style={styles.stack}>
               <Button
@@ -745,14 +751,14 @@ export default function EpisodeDetailScreen() {
                 </Button>
               ) : null}
             </View>
-          </Card>
+          </GlassCard>
         </Animated.View>
       ) : null}
 
       {/* ============ PHASE: Final ============ */}
       {sections.finalPreview ? (
         <Animated.View entering={FadeInDown.duration(300)} exiting={FadeOutUp.duration(200)} layout={LinearTransition.springify()}>
-          <Card variant="pastelGreen">
+          <GlassCard depth="medium" glowColor="#4ADE80" active gradient={['#43E97B', '#38F9D7']}>
             <Text style={styles.sectionTitle}>Your Video is Ready</Text>
             <View style={styles.stack}>
               <Button
@@ -762,14 +768,14 @@ export default function EpisodeDetailScreen() {
                 Open Preview
               </Button>
             </View>
-          </Card>
+          </GlassCard>
         </Animated.View>
       ) : null}
 
       {/* ============ PHASE: Recovery ============ */}
       {sections.recovery ? (
         <Animated.View entering={FadeInDown.duration(250)} exiting={FadeOutUp.duration(200)} layout={LinearTransition.springify()}>
-          <Card variant="pastelPink">
+          <GlassCard depth="subtle" glowColor="#FB7185">
             <Text style={styles.sectionTitle}>Pipeline Failed</Text>
             <Text style={styles.metaText}>
               {failedJobs.length} job(s) failed. You can resume from the last successful phase or retry individual jobs.
@@ -789,7 +795,7 @@ export default function EpisodeDetailScreen() {
                 Open Processing Timeline
               </Button>
             </View>
-          </Card>
+          </GlassCard>
         </Animated.View>
       ) : null}
 
@@ -805,15 +811,15 @@ export default function EpisodeDetailScreen() {
         </Animated.View>
       ) : null}
 
-      {/* Pipeline Status — grouped by phase, latest per phase */}
+      {/* Pipeline Status — grouped by phase */}
       {phaseSummaries.length > 0 ? (
         <Animated.View entering={FadeInDown.duration(200)} layout={LinearTransition.springify()}>
-          <Card>
+          <GlassCard depth="subtle">
             <Text style={styles.sectionTitle}>Pipeline Status</Text>
             <View style={styles.phaseSummaryWrap}>
               {phaseSummaries.map((phase) => (
                 <View key={phase.phase} style={styles.phaseRow}>
-                  <View style={[styles.phaseDot, { backgroundColor: phase.status === 'idle' ? '#C8D4E3' : phase.color }]} />
+                  <View style={[styles.phaseDot, { backgroundColor: phase.status === 'idle' ? (isDark ? 'rgba(255,255,255,0.15)' : '#DEE2E6') : phase.color }]} />
                   <Text style={styles.phaseLabel}>{phase.label}</Text>
                   <Text style={[
                     styles.phaseStatusText,
@@ -824,12 +830,12 @@ export default function EpisodeDetailScreen() {
                     {phase.status === 'done' ? 'Complete'
                       : phase.status === 'error' ? 'Failed'
                       : phase.status === 'active' ? `Processing${phase.latestJob ? ` ${phase.latestJob.progress}%` : ''}`
-                      : '—'}
+                      : '\u2014'}
                   </Text>
                 </View>
               ))}
             </View>
-          </Card>
+          </GlassCard>
         </Animated.View>
       ) : null}
     </View>

@@ -250,6 +250,7 @@ model Episode {
   // Raw voiceover (before cleaning) - Phase 1.1
   rawVoiceoverS3Key      String?
   rawVoiceoverMuxAssetId String?
+  rawVoiceoverPlaybackId String?
   rawVoiceoverDuration   Float?
 
   // Cleaned voiceover (after silence/filler removal) - Phase 1.4

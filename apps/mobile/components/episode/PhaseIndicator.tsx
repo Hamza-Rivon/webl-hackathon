@@ -1,22 +1,25 @@
 /**
  * Phase Indicator Component
  *
- * Visual progress bar showing Phase 1-5 progress across the video processing pipeline.
+ * 3D horizontal scrollable pipeline visualization.
+ * Shows Phase 1-5 as cinematic gradient cards with depth and glow effects.
  */
 
 import React, { useEffect } from 'react';
-import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import Animated, {
   FadeIn,
   FadeInDown,
   useAnimatedStyle,
   useSharedValue,
-  withRepeat,
   withTiming,
   Easing,
 } from 'react-native-reanimated';
 import { Ionicons } from '@/components/ui/SymbolIcon';
-import { colors, typography, spacing, borderRadius, shadows } from '../../lib/theme';
+import { useTheme } from '@/contexts/ThemeContext';
+import { typography, spacing, borderRadius, phaseGradients } from '@/lib/theme';
+import { PipelinePhaseCard } from './PipelinePhaseCard';
+import { LinearGradient } from 'expo-linear-gradient';
 
 export interface PhaseConfig {
   id: number;
@@ -42,102 +45,6 @@ export interface PhaseIndicatorProps {
   onPhasePress?: (phase: number) => void;
 }
 
-function PhaseStep({
-  phase,
-  isComplete,
-  isCurrent,
-  isUpcoming,
-  onPress,
-  isLast,
-}: {
-  phase: PhaseConfig;
-  isComplete: boolean;
-  isCurrent: boolean;
-  isUpcoming: boolean;
-  onPress?: () => void;
-  isLast: boolean;
-}) {
-  const pulseValue = useSharedValue(0);
-
-  useEffect(() => {
-    if (isCurrent) {
-      pulseValue.value = withRepeat(
-        withTiming(1, { duration: 2000, easing: Easing.inOut(Easing.ease) }),
-        -1,
-        true
-      );
-    } else {
-      pulseValue.value = 0;
-    }
-  }, [isCurrent, pulseValue]);
-
-  const pulseStyle = useAnimatedStyle(() => ({
-    opacity: isCurrent ? 0.5 + pulseValue.value * 0.5 : 1,
-  }));
-
-  const stepColor = isComplete
-    ? colors.success
-    : isCurrent
-      ? colors.primary.DEFAULT
-      : colors.text.light;
-
-  return (
-    <View style={stepStyles.wrapper}>
-      <Pressable
-        onPress={onPress}
-        disabled={!onPress}
-        style={({ pressed }) => [
-          stepStyles.step,
-          pressed && onPress && stepStyles.stepPressed,
-        ]}
-      >
-        <Animated.View
-          style={[
-            stepStyles.circle,
-            isComplete && stepStyles.circleComplete,
-            isCurrent && stepStyles.circleCurrent,
-            isUpcoming && stepStyles.circleUpcoming,
-            isCurrent && pulseStyle,
-          ]}
-        >
-          {isComplete ? (
-            <Ionicons name="checkmark" size={16} color="#fff" />
-          ) : (
-            <Ionicons
-              name={phase.icon}
-              size={16}
-              color={isCurrent ? '#fff' : colors.text.light}
-            />
-          )}
-        </Animated.View>
-        <Text
-          style={[
-            stepStyles.label,
-            isComplete && stepStyles.labelComplete,
-            isCurrent && stepStyles.labelCurrent,
-            isUpcoming && stepStyles.labelUpcoming,
-          ]}
-          numberOfLines={1}
-        >
-          {phase.label}
-        </Text>
-      </Pressable>
-
-      {!isLast ? (
-        <View style={stepStyles.connectorWrap}>
-          <View
-            style={[
-              stepStyles.connector,
-              isComplete && stepStyles.connectorComplete,
-              isCurrent && stepStyles.connectorCurrent,
-            ]}
-          />
-        </View>
-      ) : null}
-    </View>
-  );
-}
-
 export function PhaseIndicator({
   currentPhase,
   phaseProgress = 0,
@@ -145,6 +52,7 @@ export function PhaseIndicator({
   compact = false,
   onPhasePress,
 }: PhaseIndicatorProps) {
+  const { colors, isDark } = useTheme();
   const overallProgress = Math.min(
     ((currentPhase - 1) * 20) + (phaseProgress / 5),
     100
@@ -165,21 +73,40 @@ export function PhaseIndicator({
 
   if (compact) {
     const currentConfig = PHASES[currentPhase - 1];
+    const gradient = phaseGradients[currentPhase as keyof typeof phaseGradients] || phaseGradients[1];
     return (
-      <Animated.View entering={FadeIn.duration(300)} style={compactStyles.container}>
+      <Animated.View
+        entering={FadeIn.duration(300)}
+        style={[
+          compactStyles.container,
+          {
+            backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.95)',
+            borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+          },
+        ]}
+      >
         <View style={compactStyles.row}>
-          <View style={compactStyles.iconWrap}>
-            <Ionicons name={currentConfig?.icon || 'film-outline'} size={16} color={colors.primary.DEFAULT} />
+          <View style={[compactStyles.iconWrap, { backgroundColor: gradient[0] }]}>
+            <Ionicons name={currentConfig?.icon || 'film-outline'} size={16} color="#FFFFFF" />
           </View>
           <View style={compactStyles.info}>
-            <Text style={compactStyles.label}>
+            <Text style={[compactStyles.label, { color: colors.text.DEFAULT }]}>
               Phase {currentPhase}: {currentConfig?.label || 'Processing'}
             </Text>
-            <Text style={compactStyles.progress}>{Math.round(overallProgress)}%</Text>
+            <Text style={[compactStyles.progress, { color: gradient[0] }]}>
+              {Math.round(overallProgress)}%
+            </Text>
           </View>
         </View>
-        <View style={compactStyles.track}>
-          <Animated.View style={[compactStyles.fill, progressStyle]} />
+        <View style={[compactStyles.track, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }]}>
+          <Animated.View style={[compactStyles.fill, progressStyle]}>
+            <LinearGradient
+              colors={[...gradient]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={StyleSheet.absoluteFillObject}
+            />
+          </Animated.View>
         </View>
       </Animated.View>
     );
@@ -187,31 +114,79 @@ export function PhaseIndicator({
 
   return (
     <Animated.View entering={FadeInDown.duration(350)} style={styles.container}>
-      <View style={styles.stepsRow}>
+      {/* 3D Phase Cards Row */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.cardsRow}
+      >
         {PHASES.map((phase, index) => {
-          const isComplete = phase.id < currentPhase || (phase.id === currentPhase && currentPhase === 5 && overallProgress >= 100);
+          const isComplete =
+            phase.id < currentPhase ||
+            (phase.id === currentPhase && currentPhase === 5 && overallProgress >= 100);
           const isCurrent = phase.id === currentPhase && !isComplete;
           const isUpcoming = phase.id > currentPhase;
 
           return (
-            <PhaseStep
-              key={phase.id}
-              phase={phase}
-              isComplete={isComplete}
-              isCurrent={isCurrent}
-              isUpcoming={isUpcoming}
-              isLast={index === PHASES.length - 1}
-              onPress={onPhasePress ? () => onPhasePress(phase.id) : undefined}
-            />
+            <React.Fragment key={phase.id}>
+              <PipelinePhaseCard
+                phase={phase}
+                isComplete={isComplete}
+                isCurrent={isCurrent}
+                isUpcoming={isUpcoming}
+                progress={isCurrent ? phaseProgress : isComplete ? 100 : 0}
+                onPress={onPhasePress ? () => onPhasePress(phase.id) : undefined}
+              />
+              {/* Connector line between cards */}
+              {index < PHASES.length - 1 ? (
+                <View style={styles.connectorWrap}>
+                  <View
+                    style={[
+                      styles.connector,
+                      {
+                        backgroundColor: isComplete
+                          ? phaseGradients[(phase.id as keyof typeof phaseGradients)] ?.[0] || '#4ADE80'
+                          : isDark
+                            ? 'rgba(255,255,255,0.18)'
+                            : 'rgba(0,0,0,0.08)',
+                      },
+                    ]}
+                  />
+                  {isComplete ? (
+                    <View
+                      style={[
+                        styles.connectorDot,
+                        { backgroundColor: phaseGradients[(phase.id as keyof typeof phaseGradients)]?.[0] || '#4ADE80' },
+                      ]}
+                    />
+                  ) : null}
+                </View>
+              ) : null}
+            </React.Fragment>
           );
         })}
-      </View>
+      </ScrollView>
 
+      {/* Overall progress bar */}
       <View style={styles.progressSection}>
-        <View style={styles.progressTrack}>
-          <Animated.View style={[styles.progressFill, progressStyle]} />
+        <View
+          style={[
+            styles.progressTrack,
+            { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' },
+          ]}
+        >
+          <Animated.View style={[styles.progressFill, progressStyle]}>
+            <LinearGradient
+              colors={['#5CF6FF', '#0EA5A8']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={StyleSheet.absoluteFillObject}
+            />
+          </Animated.View>
         </View>
-        <Text style={styles.progressLabel}>{Math.round(overallProgress)}% complete</Text>
+        <Text style={[styles.progressLabel, { color: colors.text.muted }]}>
+          {Math.round(overallProgress)}% complete
+        </Text>
       </View>
     </Animated.View>
   );
@@ -252,125 +227,60 @@ export function getPhaseFromJobType(jobType: string): number {
   return 1;
 }
 
-const stepStyles = StyleSheet.create({
-  wrapper: {
-    flex: 1,
+const styles = StyleSheet.create({
+  container: {
+    gap: spacing.lg,
+  },
+  cardsRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-  },
-  step: {
     alignItems: 'center',
-    gap: spacing.xs,
-    minWidth: 48,
-  },
-  stepPressed: {
-    opacity: 0.7,
-  },
-  circle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    borderWidth: 2,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  circleComplete: {
-    backgroundColor: colors.success,
-    borderColor: colors.success,
-    ...shadows.sm,
-    shadowColor: colors.success,
-  },
-  circleCurrent: {
-    backgroundColor: colors.primary.DEFAULT,
-    borderColor: colors.primary.DEFAULT,
-    ...shadows.md,
-    shadowColor: colors.primary.DEFAULT,
-    shadowOpacity: 0.4,
-  },
-  circleUpcoming: {
-    backgroundColor: colors.panelAlt,
-    borderColor: colors.border,
-    opacity: 0.6,
-  },
-  label: {
-    fontSize: 10,
-    fontFamily: typography.fontFamily.body,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.text.muted,
-    textAlign: 'center',
-    maxWidth: 56,
-  },
-  labelComplete: {
-    color: colors.success,
-    fontWeight: typography.fontWeight.bold,
-  },
-  labelCurrent: {
-    color: colors.primary.DEFAULT,
-    fontWeight: typography.fontWeight.bold,
-  },
-  labelUpcoming: {
-    color: colors.text.light,
-    opacity: 0.6,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: spacing.sm,
+    gap: 0,
   },
   connectorWrap: {
-    flex: 1,
-    paddingTop: 17,
-    paddingHorizontal: 2,
+    width: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   connector: {
     height: 2,
-    backgroundColor: colors.border,
+    width: '100%',
     borderRadius: 1,
   },
-  connectorComplete: {
-    backgroundColor: colors.success,
-  },
-  connectorCurrent: {
-    backgroundColor: colors.primary.light,
-  },
-});
-
-const styles = StyleSheet.create({
-  container: {
-    padding: spacing.md,
-    gap: spacing.lg,
-  },
-  stepsRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'center',
+  connectorDot: {
+    position: 'absolute',
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    right: -1,
   },
   progressSection: {
     gap: spacing.xs,
+    paddingHorizontal: spacing.sm,
   },
   progressTrack: {
-    height: 6,
-    backgroundColor: colors.panelAlt,
+    height: 4,
     borderRadius: borderRadius.full,
     overflow: 'hidden',
   },
   progressFill: {
     height: '100%',
-    backgroundColor: colors.primary.DEFAULT,
     borderRadius: borderRadius.full,
+    overflow: 'hidden',
   },
   progressLabel: {
     fontSize: typography.fontSize.xs,
     fontFamily: typography.fontFamily.body,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.text.muted,
+    fontWeight: typography.fontWeight.semibold as any,
     textAlign: 'center',
   },
 });
 
 const compactStyles = StyleSheet.create({
   container: {
-    backgroundColor: colors.surface,
     borderRadius: borderRadius.md,
     borderWidth: 1,
-    borderColor: colors.border,
     padding: spacing.md,
     gap: spacing.sm,
   },
@@ -383,7 +293,6 @@ const compactStyles = StyleSheet.create({
     width: 30,
     height: 30,
     borderRadius: 8,
-    backgroundColor: colors.panelAlt,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -396,25 +305,22 @@ const compactStyles = StyleSheet.create({
   label: {
     fontSize: typography.fontSize.sm,
     fontFamily: typography.fontFamily.body,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.text.DEFAULT,
+    fontWeight: typography.fontWeight.semibold as any,
   },
   progress: {
     fontSize: typography.fontSize.sm,
     fontFamily: typography.fontFamily.mono,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.primary.DEFAULT,
+    fontWeight: typography.fontWeight.bold as any,
   },
   track: {
     height: 4,
-    backgroundColor: colors.panelAlt,
     borderRadius: 2,
     overflow: 'hidden',
   },
   fill: {
     height: '100%',
-    backgroundColor: colors.primary.DEFAULT,
     borderRadius: 2,
+    overflow: 'hidden',
   },
 });
 

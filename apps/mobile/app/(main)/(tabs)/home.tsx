@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { usePathname, useRouter } from 'expo-router';
 import { useUser } from '@clerk/clerk-expo';
@@ -19,6 +19,7 @@ import { useSeries, seriesKeys } from '@/hooks/useSeries';
 import { useJobs } from '@/hooks/useJobProgress';
 import { useHomeRealtimeUpdates } from '@/hooks/useRealtimeUpdates';
 import { colors, typography, spacing, borderRadius } from '@/lib/theme';
+import { useTheme } from '@/contexts/ThemeContext';
 import { sortJobsByPipelineOrder } from '@/lib/pipeline';
 import { trackPrimaryAction, trackScreenView } from '@/lib/analytics';
 import { useNotificationStore } from '@/stores/notifications';
@@ -47,7 +48,7 @@ export default function HomeScreen() {
   const { user } = useUser();
   const unreadNotifications = useNotificationStore((state) => state.unreadCount);
   const hasPersona = useAuthStore((state) => state.hasPersona);
-  const [isDarkMode, setIsDarkMode] = useState(true);
+  const { isDark: isDarkMode, toggle: toggleTheme } = useTheme();
   const t = isDarkMode ? darkTheme : lightTheme;
 
   const { data: episodes, isLoading: episodesLoading } = useEpisodes();
@@ -177,7 +178,7 @@ export default function HomeScreen() {
             <Pressable
               onPress={() => {
                 triggerHaptic('light');
-                setIsDarkMode((d) => !d);
+                toggleTheme();
               }}
               style={[styles.navIconBtn, { backgroundColor: t.toggleBg }]}
             >
@@ -464,25 +465,25 @@ const darkTheme = {
 };
 
 const lightTheme = {
-  bg: colors.background,
+  bg: '#FFFFFF',
   text: colors.text.DEFAULT,
   textMuted: colors.text.muted,
   accent: colors.primary.DEFAULT,
-  toggleBg: 'rgba(16,35,61,0.08)',
+  toggleBg: 'rgba(16,35,61,0.06)',
   toggleIcon: colors.text.DEFAULT,
-  iconButtonBg: 'rgba(16,35,61,0.06)',
-  bannerCardBg: colors.surface,
-  bannerGradientStart: 'rgba(14,165,168,0.12)',
-  bannerGradientEnd: 'rgba(245,158,11,0.12)',
-  bannerBorder: 'rgba(16,35,61,0.12)',
+  iconButtonBg: 'rgba(16,35,61,0.04)',
+  bannerCardBg: '#F8F9FA',
+  bannerGradientStart: 'rgba(14,165,168,0.08)',
+  bannerGradientEnd: 'rgba(245,158,11,0.08)',
+  bannerBorder: 'rgba(16,35,61,0.08)',
   bannerTitle: colors.text.DEFAULT,
   bannerSub: colors.text.muted,
-  actionCardBg: colors.surface,
-  actionCardBorder: colors.border,
-  actionIconAltBg: colors.panelAlt,
+  actionCardBg: '#F8F9FA',
+  actionCardBorder: 'rgba(0,0,0,0.06)',
+  actionIconAltBg: '#F1F3F5',
   actionTitle: colors.text.DEFAULT,
   actionSub: colors.text.muted,
-  emptyIconBg: 'rgba(14,165,168,0.14)',
+  emptyIconBg: 'rgba(14,165,168,0.1)',
   emptyTitle: colors.text.DEFAULT,
   emptyDesc: colors.text.muted,
 };

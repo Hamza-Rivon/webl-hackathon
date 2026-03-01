@@ -10,3 +10,8 @@ export {
   useScreenContextOptional,
   type ScreenContextValue,
 } from './ScreenContext.js';
+
+export {
+  ThemeProvider,
+  useTheme,
+} from './ThemeContext.js';

@@ -4,9 +4,9 @@
  * Uses Mistral Voxtral model on AWS Bedrock for word-level audio transcription.
  * Drop-in alternative to Deepgram with the same WordTimestamp output format.
  *
- * Voxtral on Bedrock has a practical audio limit of ~55 seconds per request.
- * For longer audio, this service automatically splits into chunks, transcribes
- * each chunk separately, and merges the results with correct timestamp offsets.
+ * For longer audio (>2 minutes), this service automatically splits into chunks,
+ * transcribes each chunk separately, and merges the results with correct
+ * timestamp offsets. Adaptive splitting handles max_tokens or parse failures.
  */
 
 import {
@@ -55,12 +55,12 @@ Rules:
 /** Formats that Bedrock Voxtral actually accepts */
 const BEDROCK_SUPPORTED_FORMATS = new Set<AudioFormat>(['mp3', 'wav']);
 
-/** Max chunk duration in seconds — Voxtral truncates audio beyond ~55s */
-const MAX_CHUNK_SECONDS = 50;
+/** Max chunk duration in seconds — increased to 2 minutes for longer recordings */
+const MAX_CHUNK_SECONDS = 120;
 /** If a chunk fails with malformed/truncated JSON, split recursively down to this duration */
-const MIN_ADAPTIVE_CHUNK_SECONDS = 12;
-/** Maximum recursive split depth for a single failing chunk (50 -> 25 -> 12.5s) */
-const MAX_ADAPTIVE_SPLIT_DEPTH = 2;
+const MIN_ADAPTIVE_CHUNK_SECONDS = 20;
+/** Maximum recursive split depth for a single failing chunk (120 -> 60 -> 30 -> 15s) */
+const MAX_ADAPTIVE_SPLIT_DEPTH = 3;
 
 const EXTENSION_TO_FORMAT: Record<string, AudioFormat> = {
   wav: 'wav',
@@ -407,7 +407,7 @@ async function transcribeChunk(
   const command = new ConverseCommand({
     modelId: config.bedrock.voxtralModel,
     messages: [userMessage],
-    inferenceConfig: { maxTokens: 16384, temperature: 0 },
+    inferenceConfig: { maxTokens: 16000, temperature: 0 },
   });
 
   logger.info(`[Voxtral] ${scopedTag} sending to Bedrock`, {

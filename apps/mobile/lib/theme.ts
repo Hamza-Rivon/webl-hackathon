@@ -210,6 +210,82 @@ export const gradients = {
   panelGlowBottom: 'rgba(245, 158, 11, 0.12)',
 } as const;
 
+// ── Dark Palette ──────────────────────────────────────────────
+export const darkColors = {
+  primary: {
+    DEFAULT: '#5CF6FF',
+    dark: '#0EA5A8',
+    light: '#99FBFF',
+  },
+  secondary: {
+    DEFAULT: '#FCD34D',
+    dark: '#F59E0B',
+    light: '#FDE68A',
+  },
+  accent: {
+    DEFAULT: '#4ADE80',
+    dark: '#22C55E',
+    light: '#86EFAC',
+  },
+
+  background: '#0A0E14',
+  surface: '#141820',
+  panel: '#1C2230',
+  panelAlt: '#232B3B',
+  overlay: 'rgba(10, 14, 20, 0.92)',
+  border: 'rgba(255,255,255,0.15)',
+
+  text: {
+    DEFAULT: '#F1F5F9',
+    muted: 'rgba(255,255,255,0.78)',
+    light: 'rgba(255,255,255,0.56)',
+    inverse: '#10233D',
+  },
+
+  success: '#4ADE80',
+  warning: '#FBBF24',
+  error: '#FB7185',
+  info: '#60A5FA',
+
+  pastel: {
+    pink: 'rgba(251,113,133,0.12)',
+    blue: 'rgba(96,165,250,0.12)',
+    green: 'rgba(74,222,128,0.12)',
+    yellow: 'rgba(251,191,36,0.12)',
+    purple: 'rgba(167,139,250,0.12)',
+    orange: 'rgba(251,146,60,0.12)',
+  },
+} as const;
+
+// Light palette (pure white base for branding)
+export const lightColors = {
+  ...colors,
+  background: '#FFFFFF',
+  surface: '#F8F9FA',
+  panel: '#F1F3F5',
+  panelAlt: '#E9ECEF',
+  overlay: 'rgba(255, 255, 255, 0.92)',
+  border: '#DEE2E6',
+} as const;
+
+export type ThemeMode = 'light' | 'dark';
+
+export type ThemeColors = typeof colors;
+
+export function getThemeColors(mode: ThemeMode): ThemeColors {
+  if (mode === 'dark') return darkColors as unknown as ThemeColors;
+  return lightColors as unknown as ThemeColors;
+}
+
+// Pipeline phase gradients for 3D cards
+export const phaseGradients = {
+  1: ['#667EEA', '#764BA2'] as const, // Voiceover: purple-blue
+  2: ['#F093FB', '#F5576C'] as const, // Footage: pink-coral
+  3: ['#4FACFE', '#00F2FE'] as const, // Matching: cyan-blue
+  4: ['#43E97B', '#38F9D7'] as const, // Edit Plan: green-teal
+  5: ['#FA709A', '#FEE140'] as const, // Render: pink-gold
+} as const;
+
 // Semantic surface and elevation tokens for consistent hierarchy.
 export const surfaceLevels = {
   base: colors.background,

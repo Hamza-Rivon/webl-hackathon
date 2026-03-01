@@ -233,6 +233,9 @@ async function formatEpisodeResponse(episode: {
   voiceoverS3Key: string | null;
   finalS3Key: string | null;
   muxVoiceoverAssetId: string | null;
+  rawVoiceoverMuxAssetId: string | null;
+  rawVoiceoverPlaybackId: string | null;
+  rawVoiceoverDuration: number | null;
   cleanVoiceoverS3Key: string | null;
   cleanVoiceoverMuxAssetId: string | null;
   cleanVoiceoverPlaybackId: string | null;
@@ -326,10 +329,30 @@ async function formatEpisodeResponse(episode: {
       ? renderSpec.arollCleanPreviewDuration
       : null;
 
+  // Resolve raw voiceover playback ID (lazy-fetch from Mux for existing episodes)
+  let rawVoiceoverPlaybackId = episode.rawVoiceoverPlaybackId ?? null;
+  if (!rawVoiceoverPlaybackId && episode.rawVoiceoverMuxAssetId) {
+    try {
+      rawVoiceoverPlaybackId = await muxService.getPlaybackId(episode.rawVoiceoverMuxAssetId);
+      // Backfill the database so future requests are fast
+      if (rawVoiceoverPlaybackId) {
+        await prisma.episode.update({
+          where: { id: episode.id },
+          data: { rawVoiceoverPlaybackId },
+        }).catch(() => { /* best-effort backfill */ });
+      }
+    } catch {
+      logger.warn(`Could not resolve raw voiceover playback ID for episode ${episode.id}`);
+    }
+  }
+
   return {
     ...episode,
     // Explicit "which voiceover should UI play" field (cleaned takes priority)
     activeVoiceoverPlaybackId: episode.cleanVoiceoverPlaybackId ?? null,
+    // Raw voiceover (original recording)
+    rawVoiceoverPlaybackId,
+    rawVoiceoverDuration: episode.rawVoiceoverDuration ?? null,
     // Mux URLs
     muxPlaybackUrl,
     thumbnailUrl,

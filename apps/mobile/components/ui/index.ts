@@ -80,3 +80,10 @@ export { IconButton } from './IconButton';
 export { ListRow } from './ListRow';
 export { AppLoadingScreen } from './AppLoadingScreen';
 export { AdaptiveGlass } from './AdaptiveGlass';
+
+// SegmentedControl
+export { SegmentedControl } from './SegmentedControl';
+export type { SegmentedControlOption } from './SegmentedControl';
+
+// GlassCard
+export { GlassCard } from './GlassCard';

@@ -4,6 +4,7 @@ import { usePathname, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@/components/ui/SymbolIcon';
 import { borderRadius, colors, spacing, typography } from '@/lib/theme';
+import { useTheme } from '@/contexts/ThemeContext';
 import { AdaptiveGlass } from './AdaptiveGlass';
 import { Button } from './Button';
 
@@ -43,6 +44,7 @@ export function StickyActionBar({
   const router = useRouter();
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
+  const { colors: tc, isDark } = useTheme();
   const activeKey = getActiveQuickNavKey(pathname);
   const [overflowOpen, setOverflowOpen] = useState(false);
 
@@ -65,11 +67,12 @@ export function StickyActionBar({
           styles.container,
           {
             paddingBottom: Math.max(insets.bottom, spacing.sm),
+            borderTopColor: isDark ? 'rgba(255,255,255,0.06)' : tc.border,
           },
         ]}
         glassEffectStyle="regular"
-        tintColor="#FFFFFFB5"
-        blurIntensity={26}
+        tintColor={isDark ? 'rgba(10,14,20,0.9)' : '#FFFFFFEE'}
+        blurIntensity={isDark ? 40 : 26}
       >
         <View style={styles.row}>
           {inlineActions.map((action, index) => {

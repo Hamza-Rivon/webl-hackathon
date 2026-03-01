@@ -9,7 +9,8 @@ import {
   ViewStyle,
 } from 'react-native';
 import { Edge, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors, spacing } from '@/lib/theme';
+import { useTheme } from '@/contexts/ThemeContext';
+import { spacing } from '@/lib/theme';
 
 interface ScreenProps {
   children: React.ReactNode;
@@ -29,6 +30,7 @@ export function Screen({
   topInset = true,
 }: ScreenProps) {
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
   const flattenedContentStyle = StyleSheet.flatten(contentContainerStyle) || {};
   const resolvedPaddingBottom = Math.max(
     Number(flattenedContentStyle.paddingBottom || 0),
@@ -38,6 +40,8 @@ export function Screen({
     contentContainerStyle,
     { paddingBottom: resolvedPaddingBottom },
   ];
+
+  const bg = { backgroundColor: colors.background };
 
   const body = scroll ? (
     <ScrollView
@@ -56,7 +60,7 @@ export function Screen({
   const safeEdges: Edge[] = topInset ? ['top', 'left', 'right', 'bottom'] : ['left', 'right', 'bottom'];
 
   return (
-    <SafeAreaView edges={safeEdges} style={[styles.safe, style]}>
+    <SafeAreaView edges={safeEdges} style={[styles.safe, bg, style]}>
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -71,7 +75,6 @@ export function Screen({
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: colors.background,
   },
   flex: {
     flex: 1,

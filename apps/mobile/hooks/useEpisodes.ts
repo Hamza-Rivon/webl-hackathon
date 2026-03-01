@@ -143,6 +143,10 @@ export interface EpisodeWithDetails extends Episode {
   muxVoiceoverAssetId?: string;
   muxFinalAssetId?: string;
   muxFinalPlaybackId?: string;
+  // Raw voiceover (original recording)
+  rawVoiceoverMuxAssetId?: string | null;
+  rawVoiceoverPlaybackId?: string | null;
+  rawVoiceoverDuration?: number | null;
   cleanVoiceoverMuxAssetId?: string;
   cleanVoiceoverPlaybackId?: string;
   // S3 keys

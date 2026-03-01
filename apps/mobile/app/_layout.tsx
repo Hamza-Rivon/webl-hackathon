@@ -17,6 +17,7 @@ import { queryClient } from '@/lib/queryClient';
 import { AppLoadingScreen, ToastProvider } from '@/components/ui';
 import { NavigationServiceProvider } from '@/lib/navigation/NavigationServiceProvider';
 import { ScreenProvider } from '@/contexts/ScreenContext';
+import { ThemeProvider, useTheme } from '@/contexts/ThemeContext';
 import { NavigationDebugOverlay } from '@/components/navigation/NavigationDebugOverlay';
 import { useNavigationDebug } from '@/hooks/useNavigationDebug';
 
@@ -28,6 +29,7 @@ if (!publishableKey) {
 
 function AppNavigator() {
   const { isLoaded } = useAuth();
+  const { isDark } = useTheme();
   const { visible: debugVisible, toggle: toggleDebug } = useNavigationDebug();
 
   if (!isLoaded) {
@@ -36,7 +38,7 @@ function AppNavigator() {
 
   return (
     <>
-      <StatusBar style="dark" />
+      <StatusBar style={isDark ? 'light' : 'dark'} />
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="index" />
         <Stack.Screen name="(auth)" />
@@ -50,28 +52,30 @@ function AppNavigator() {
 export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <ClerkProvider
-        publishableKey={publishableKey}
-        tokenCache={tokenCache}
-        appearance={{
-          variables: {
-            colorPrimary: '#0EA5A8',
-            colorBackground: '#EEF4FB',
-            colorText: '#10233D',
-            borderRadius: '0.875rem',
-          },
-        }}
-      >
-        <QueryClientProvider client={queryClient}>
-          <ToastProvider>
-            <NavigationServiceProvider>
-              <ScreenProvider>
-                <AppNavigator />
-              </ScreenProvider>
-            </NavigationServiceProvider>
-          </ToastProvider>
-        </QueryClientProvider>
-      </ClerkProvider>
+      <ThemeProvider>
+        <ClerkProvider
+          publishableKey={publishableKey}
+          tokenCache={tokenCache}
+          appearance={{
+            variables: {
+              colorPrimary: '#0EA5A8',
+              colorBackground: '#FFFFFF',
+              colorText: '#10233D',
+              borderRadius: '0.875rem',
+            },
+          }}
+        >
+          <QueryClientProvider client={queryClient}>
+            <ToastProvider>
+              <NavigationServiceProvider>
+                <ScreenProvider>
+                  <AppNavigator />
+                </ScreenProvider>
+              </NavigationServiceProvider>
+            </ToastProvider>
+          </QueryClientProvider>
+        </ClerkProvider>
+      </ThemeProvider>
     </GestureHandlerRootView>
   );
 }

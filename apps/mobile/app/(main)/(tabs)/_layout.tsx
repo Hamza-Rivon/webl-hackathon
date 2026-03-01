@@ -3,18 +3,25 @@ import { Ionicons } from '@/components/ui/SymbolIcon';
 import { Platform, Pressable, StyleSheet, View } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { borderRadius, spacing, typography } from '@/lib/theme';
+import { useTheme } from '@/contexts/ThemeContext';
 import { triggerHaptic } from '@/lib/haptics';
 
-function TabIcon({ focused, name }: { focused: boolean; name: keyof typeof Ionicons.glyphMap }) {
+function TabIcon({ focused, name, isDark }: { focused: boolean; name: keyof typeof Ionicons.glyphMap; isDark: boolean }) {
+  const activeColor = isDark ? '#5CF6FF' : '#0EA5A8';
+  const inactiveColor = isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.35)';
   return (
-    <View style={[styles.iconWrap, focused && styles.iconWrapActive]}>
-      <Ionicons name={name} size={20} color={focused ? '#5CF6FF' : 'rgba(255,255,255,0.45)'} />
+    <View style={[styles.iconWrap, focused && { backgroundColor: isDark ? 'rgba(92,246,255,0.1)' : 'rgba(14,165,168,0.1)' }]}>
+      <Ionicons name={name} size={20} color={focused ? activeColor : inactiveColor} />
     </View>
   );
 }
 
 export default function TabLayout() {
   const router = useRouter();
+  const { isDark } = useTheme();
+
+  const activeColor = isDark ? '#5CF6FF' : '#0EA5A8';
+  const inactiveColor = isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.35)';
 
   return (
     <Tabs
@@ -23,11 +30,22 @@ export default function TabLayout() {
         tabBarStyle: styles.tabBar,
         tabBarItemStyle: styles.tabItem,
         tabBarBackground: () => (
-          <BlurView intensity={40} tint="dark" style={styles.tabBarGlass} />
+          <BlurView
+            intensity={isDark ? 40 : 60}
+            tint={isDark ? 'dark' : 'light'}
+            style={[
+              styles.tabBarGlass,
+              {
+                backgroundColor: isDark
+                  ? 'rgba(10, 14, 20, 0.85)'
+                  : 'rgba(255, 255, 255, 0.88)',
+              },
+            ]}
+          />
         ),
         tabBarLabelStyle: styles.label,
-        tabBarActiveTintColor: '#5CF6FF',
-        tabBarInactiveTintColor: 'rgba(255,255,255,0.45)',
+        tabBarActiveTintColor: activeColor,
+        tabBarInactiveTintColor: inactiveColor,
         tabBarHideOnKeyboard: true,
       }}
     >
@@ -35,14 +53,14 @@ export default function TabLayout() {
         name="home"
         options={{
           title: 'Home',
-          tabBarIcon: ({ focused }) => <TabIcon focused={focused} name="home-outline" />,
+          tabBarIcon: ({ focused }) => <TabIcon focused={focused} name="home-outline" isDark={isDark} />,
         }}
       />
       <Tabs.Screen
         name="feed"
         options={{
           title: 'Feed',
-          tabBarIcon: ({ focused }) => <TabIcon focused={focused} name="play-circle-outline" />,
+          tabBarIcon: ({ focused }) => <TabIcon focused={focused} name="play-circle-outline" isDark={isDark} />,
         }}
       />
       <Tabs.Screen
@@ -52,7 +70,14 @@ export default function TabLayout() {
           tabBarButton: () => (
             <View style={styles.createButtonSlot} pointerEvents="box-none">
               <Pressable
-                style={({ pressed }) => [styles.createButton, pressed && styles.createButtonPressed]}
+                style={({ pressed }) => [
+                  styles.createButton,
+                  {
+                    backgroundColor: isDark ? '#5CF6FF' : '#0EA5A8',
+                    shadowColor: isDark ? '#5CF6FF' : '#0EA5A8',
+                  },
+                  pressed && styles.createButtonPressed,
+                ]}
                 onPress={() => {
                   triggerHaptic('medium');
                   router.push('/(main)/episode/new');
@@ -60,7 +85,7 @@ export default function TabLayout() {
                 accessibilityRole="button"
                 accessibilityLabel="Create episode"
               >
-                <Ionicons name="add" size={24} color="#000" />
+                <Ionicons name="add" size={24} color={isDark ? '#000' : '#FFFFFF'} />
               </Pressable>
             </View>
           ),
@@ -70,14 +95,14 @@ export default function TabLayout() {
         name="jobs"
         options={{
           title: 'Activity',
-          tabBarIcon: ({ focused }) => <TabIcon focused={focused} name="pulse-outline" />,
+          tabBarIcon: ({ focused }) => <TabIcon focused={focused} name="pulse-outline" isDark={isDark} />,
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
           title: 'Profile',
-          tabBarIcon: ({ focused }) => <TabIcon focused={focused} name="person-outline" />,
+          tabBarIcon: ({ focused }) => <TabIcon focused={focused} name="person-outline" isDark={isDark} />,
         }}
       />
       <Tabs.Screen name="series" options={{ href: null }} />
@@ -90,7 +115,7 @@ const styles = StyleSheet.create({
   tabBar: {
     backgroundColor: 'transparent',
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.06)',
+    borderTopColor: 'rgba(0,0,0,0.04)',
     height: Platform.OS === 'ios' ? 88 : 72,
     paddingTop: spacing.xs,
     paddingBottom: Platform.OS === 'ios' ? spacing.sm : spacing.xs,
@@ -103,12 +128,11 @@ const styles = StyleSheet.create({
   },
   tabBarGlass: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(10, 14, 20, 0.85)',
   },
   label: {
     fontFamily: typography.fontFamily.body,
     fontSize: 10,
-    fontWeight: typography.fontWeight.semibold,
+    fontWeight: typography.fontWeight.semibold as any,
     letterSpacing: 0.3,
   },
   tabItem: {
@@ -123,9 +147,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  iconWrapActive: {
-    backgroundColor: 'rgba(92,246,255,0.1)',
-  },
   createButtonSlot: {
     flex: 1,
     alignItems: 'center',
@@ -136,10 +157,8 @@ const styles = StyleSheet.create({
     width: 54,
     height: 54,
     borderRadius: 16,
-    backgroundColor: '#5CF6FF',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#5CF6FF',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.4,
     shadowRadius: 12,

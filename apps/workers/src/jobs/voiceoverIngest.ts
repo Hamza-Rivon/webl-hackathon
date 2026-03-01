@@ -106,6 +106,7 @@ export async function processVoiceoverIngest(bullJob: Job<VoiceoverIngestJobData
       data: {
         rawVoiceoverS3Key: s3Key,
         rawVoiceoverMuxAssetId: assetInfo.id,
+        rawVoiceoverPlaybackId: playbackId,
         rawVoiceoverDuration: readyAsset.duration,
         status: 'voiceover_uploaded',
       },

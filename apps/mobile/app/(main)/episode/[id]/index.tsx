@@ -45,6 +45,8 @@ import {
 import { PhaseIndicator, getPhaseFromStatus } from '@/components/episode/PhaseIndicator';
 import { VoiceoverCompare } from '@/components/episode/VoiceoverCompare';
 import { ARollCompare } from '@/components/episode/ARollCompare';
+import { ScriptViewer } from '@/components/episode/ScriptViewer';
+import { useBrollChunks } from '@/hooks/useBrollChunks';
 import { useTheme } from '@/contexts/ThemeContext';
 import { trackPrimaryAction, trackScreenView } from '@/lib/analytics';
 import { confirmAction } from '@/lib/confirm';
@@ -107,6 +109,7 @@ export default function EpisodeDetailScreen() {
   const elevenLabs = useElevenLabsVoiceover(id);
   const jobsQuery = useJobs({ episodeId: id }, { enabled: Boolean(id && isFocused) });
   const realtime = useUnifiedRealtimeUpdates({ episodeId: id || '', enabled: Boolean(id && isFocused) });
+  const brollQuery = useBrollChunks(id, { enabled: Boolean(id && isFocused) });
 
   const episode = episodeQuery.data;
   const jobs = useMemo(() => sortJobsByPipelineOrder(jobsQuery.data || []), [jobsQuery.data]);
@@ -537,13 +540,29 @@ export default function EpisodeDetailScreen() {
           <GlassCard depth="subtle" enterDelay={50}>
             <Text style={styles.sectionTitle}>Script</Text>
             <View style={styles.stack}>
-              <TextArea
-                label="Script"
-                value={editingScript ? draftScript : episode.scriptContent || ''}
-                onChangeText={setDraftScript}
-                editable={editingScript && actionMatrix.edit_script.allowed}
-                helperText="Write your script, then record or generate voiceover."
-              />
+              {/* Show ScriptViewer when not editing, TextArea when editing */}
+              {editingScript ? (
+                <TextArea
+                  label="Script"
+                  value={draftScript}
+                  onChangeText={setDraftScript}
+                  editable={actionMatrix.edit_script.allowed}
+                  helperText="Write your script, then record or generate voiceover."
+                />
+              ) : hasScriptContent ? (
+                <ScriptViewer
+                  scriptContent={episode.scriptContent || ''}
+                  beats={episode.scriptBeats}
+                />
+              ) : (
+                <TextArea
+                  label="Script"
+                  value=""
+                  onChangeText={setDraftScript}
+                  editable={false}
+                  helperText="Write your script, then record or generate voiceover."
+                />
+              )}
               <Button
                 variant="outline"
                 onPress={() => {
@@ -675,6 +694,16 @@ export default function EpisodeDetailScreen() {
                 Bulk Clip Import
               </Button>
 
+              {/* B-Roll Library */}
+              {brollQuery.data && brollQuery.data.total > 0 ? (
+                <Button
+                  variant="outline"
+                  onPress={() => router.push(`/(main)/episode/${id}/broll-library` as any)}
+                >
+                  B-Roll Library ({brollQuery.data.total} chunks)
+                </Button>
+              ) : null}
+
               {/* Captions toggle */}
               <View style={styles.captionsRow}>
                 <View style={styles.captionsTextWrap}>
@@ -750,6 +779,14 @@ export default function EpisodeDetailScreen() {
                   Continue Pipeline
                 </Button>
               ) : null}
+              {brollQuery.data && brollQuery.data.total > 0 ? (
+                <Button
+                  variant="outline"
+                  onPress={() => router.push(`/(main)/episode/${id}/broll-library` as any)}
+                >
+                  View B-Roll Library ({brollQuery.data.total})
+                </Button>
+              ) : null}
             </View>
           </GlassCard>
         </Animated.View>
@@ -766,6 +803,34 @@ export default function EpisodeDetailScreen() {
                 disabled={!actionMatrix.preview.allowed}
               >
                 Open Preview
+              </Button>
+              {brollQuery.data && brollQuery.data.total > 0 ? (
+                <Button
+                  variant="outline"
+                  onPress={() => router.push(`/(main)/episode/${id}/broll-library` as any)}
+                >
+                  B-Roll Library ({brollQuery.data.total} chunks)
+                </Button>
+              ) : null}
+            </View>
+          </GlassCard>
+        </Animated.View>
+      ) : null}
+
+      {/* ============ B-Roll Library (always visible when data exists) ============ */}
+      {!sections.clips && !sections.processing && !sections.finalPreview && brollQuery.data && brollQuery.data.total > 0 ? (
+        <Animated.View entering={FadeInDown.duration(250)} layout={LinearTransition.springify()}>
+          <GlassCard depth="subtle">
+            <Text style={styles.sectionTitle}>B-Roll Library</Text>
+            <View style={styles.stack}>
+              <Text style={styles.metaText}>
+                {brollQuery.data.total} analyzed chunks, {brollQuery.data.usedInFinalCut} used in final cut.
+              </Text>
+              <Button
+                variant="outline"
+                onPress={() => router.push(`/(main)/episode/${id}/broll-library` as any)}
+              >
+                Browse B-Roll Library
               </Button>
             </View>
           </GlassCard>

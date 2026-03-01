@@ -2453,7 +2453,7 @@ episodesRouter.get('/:id/broll-chunks', async (req: Request, res: Response) => {
     });
 
     // Attach Mux playback URLs and group by slot clip
-    const formatted = chunks.map((chunk) => ({
+    const formatted = chunks.map((chunk: typeof chunks[number]) => ({
       ...chunk,
       playbackUrl: chunk.muxPlaybackId
         ? muxService.getPlaybackUrl(chunk.muxPlaybackId)
@@ -2466,7 +2466,7 @@ episodesRouter.get('/:id/broll-chunks', async (req: Request, res: Response) => {
     res.json({
       chunks: formatted,
       total: formatted.length,
-      usedInFinalCut: formatted.filter((c) => c.isUsedInFinalCut).length,
+      usedInFinalCut: formatted.filter((c: typeof formatted[number]) => c.isUsedInFinalCut).length,
     });
   } catch (error) {
     logger.error(`Failed to fetch broll chunks for episode ${id}:`, error);

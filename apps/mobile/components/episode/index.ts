@@ -14,6 +14,7 @@ export {
 } from './PhaseIndicator';
 export type { PhaseConfig, PhaseIndicatorProps } from './PhaseIndicator';
 export { ErrorCard } from './ErrorCard';
+export { ScriptViewer } from './ScriptViewer';
 export type { FailedJobInfo, ErrorCardProps } from './ErrorCard';
 export {
   StatusTransitionAnimation,

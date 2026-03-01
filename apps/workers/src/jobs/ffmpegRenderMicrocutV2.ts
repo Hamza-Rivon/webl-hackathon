@@ -22,6 +22,13 @@ const CAPTION_BREAK_GAP_MS = 260;
 const CAPTION_MIN_DURATION_MS = 250;
 const CAPTION_MAX_LINES = 2;
 
+/** Words that should not end a caption cue — they need the following word for meaning. */
+const CAPTION_CONNECTORS = new Set([
+  'a', 'an', 'the', 'to', 'in', 'of', 'for', 'and', 'or', 'but',
+  'with', 'from', 'by', 'at', 'on', 'is', 'was', 'my', 'your',
+  'his', 'her', 'its', 'our', 'their', 'i',
+]);
+
 interface TranscriptWord {
   word: string;
   startMs: number;
@@ -454,7 +461,9 @@ function buildCaptionCues(words: TranscriptWord[], maxDurationMs: number): Capti
         continue;
       }
 
-      if (reachedMax || (reachedTarget && (pauseBreak || punctuationBreak)) || !next) {
+      const endsOnConnector = CAPTION_CONNECTORS.has(current.word.toLowerCase());
+
+      if (reachedMax || pauseBreak || (reachedTarget && (punctuationBreak || !endsOnConnector)) || !next) {
         break;
       }
     }

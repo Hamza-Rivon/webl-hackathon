@@ -2390,9 +2390,86 @@ episodesRouter.post('/:id/generate-voiceover', requireUsageWithinLimits, withIde
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`[generate-voiceover] Failed to generate voiceover for episode ${req.params.id}:`, error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to generate voiceover',
       details: process.env.NODE_ENV === 'development' ? errorMessage : undefined,
     });
+  }
+});
+
+// ==================== B-ROLL CHUNKS ====================
+
+/**
+ * GET /:id/broll-chunks — Fetch all B-Roll chunks for an episode
+ * Returns chunks with AI analysis, thumbnails, quality scores, and matching data.
+ */
+episodesRouter.get('/:id/broll-chunks', async (req: Request, res: Response) => {
+  const userId = getUserId(req);
+  if (!userId) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+
+  const { id } = req.params;
+
+  try {
+    const episode = await prisma.episode.findFirst({
+      where: { id, userId },
+      select: { id: true },
+    });
+
+    if (!episode) {
+      res.status(404).json({ error: 'Episode not found' });
+      return;
+    }
+
+    const chunks = await prisma.brollChunk.findMany({
+      where: { episodeId: id },
+      select: {
+        id: true,
+        slotClipId: true,
+        chunkIndex: true,
+        startMs: true,
+        endMs: true,
+        durationMs: true,
+        s3Key: true,
+        muxAssetId: true,
+        muxPlaybackId: true,
+        thumbnailUrl: true,
+        aiTags: true,
+        aiSummary: true,
+        moderationStatus: true,
+        qualityScore: true,
+        motionScore: true,
+        compositionScore: true,
+        matchScore: true,
+        matchedToSegmentId: true,
+        isUsedInFinalCut: true,
+        embeddingText: true,
+        metadata: true,
+        createdAt: true,
+      },
+      orderBy: [{ slotClipId: 'asc' }, { chunkIndex: 'asc' }],
+    });
+
+    // Attach Mux playback URLs and group by slot clip
+    const formatted = chunks.map((chunk) => ({
+      ...chunk,
+      playbackUrl: chunk.muxPlaybackId
+        ? muxService.getPlaybackUrl(chunk.muxPlaybackId)
+        : null,
+      thumbnailUrl: chunk.muxPlaybackId
+        ? `https://image.mux.com/${chunk.muxPlaybackId}/thumbnail.jpg?width=400&height=400&fit_mode=smartcrop`
+        : chunk.thumbnailUrl,
+    }));
+
+    res.json({
+      chunks: formatted,
+      total: formatted.length,
+      usedInFinalCut: formatted.filter((c) => c.isUsedInFinalCut).length,
+    });
+  } catch (error) {
+    logger.error(`Failed to fetch broll chunks for episode ${id}:`, error);
+    res.status(500).json({ error: 'Failed to fetch B-Roll chunks' });
   }
 });

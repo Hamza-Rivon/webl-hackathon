@@ -12,7 +12,7 @@ Express + Socket.IO REST API for the WEBL video editing platform. Handles episod
 - **Job Queue**: BullMQ + Redis (Upstash)
 - **Media**: AWS S3 for storage, Mux for video delivery
 - **Real-time**: Socket.IO with Redis adapter
-- **AI**: Mistral Large 3 via AWS Bedrock (primary), Gemini API (fallback), OpenAI (fallback)
+- **AI**: Magistral Small via AWS Bedrock (primary), Gemini API (fallback), OpenAI (fallback)
 
 ### AI Provider Routing
 
@@ -154,7 +154,7 @@ apps/api/src/
 
 ### AI Service (`services/gemini.ts`)
 - Script generation from persona + section descriptions
-- **Primary**: Mistral Large 3 via AWS Bedrock Converse API (`mistral.magistral-small-2509`) -- uses the Bedrock Converse API for unified request/response handling
+- **Primary**: Magistral Small via AWS Bedrock Converse API (`mistral.magistral-small-2509`) -- uses the Bedrock Converse API for unified request/response handling
 - **Fallback**: Gemini API (Google Generative AI SDK), OpenAI (OpenAI SDK)
 - Provider selected via `AI_PROVIDER` env var (defaults to `mistral`)
 - JSON response with formatted structure
@@ -178,7 +178,7 @@ apps/api/src/
 
 ## AI Integration Architecture
 
-The API uses a provider-agnostic AI service layer that routes requests to the configured provider. Mistral Large 3 via AWS Bedrock is the default and recommended provider.
+The API uses a provider-agnostic AI service layer that routes requests to the configured provider. Magistral Small via AWS Bedrock is the default and recommended provider.
 
 ```mermaid
 flowchart LR
@@ -193,7 +193,7 @@ flowchart LR
     end
 
     subgraph Models
-        Mistral["mistral.mistral-large-3\n-675b-instruct"]
+        Mistral["Magistral Small\nmistral.magistral-small-2509"]
     end
 
     AIService -->|"AI_PROVIDER=mistral\n★ default"| Bedrock
@@ -203,7 +203,7 @@ flowchart LR
 ```
 
 **Why Mistral via Bedrock?**
-- Mistral Large 3 delivers strong instruction-following and structured JSON output for script generation
+- Magistral Small delivers strong instruction-following and structured JSON output for script generation
 - AWS Bedrock Converse API provides a unified interface with built-in retry, throttling, and credential management
 - Voxtral (vision model) is used in the workers layer for video frame analysis
 

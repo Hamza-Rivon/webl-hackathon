@@ -363,4 +363,9 @@ env.example
 apps/scripts/
 
 pitch1.md
-PITCH.md
+apps/pitch1.md
+
+# ==================== AGENT / AI TOOL FILES ====================
+# External skill files and AI tool configs (not project code)
+.agents/
+.claude/skills/

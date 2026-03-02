@@ -1,6 +1,6 @@
 # WEBL Workers Architecture
 
-BullMQ background job workers for AI-powered video editing pipeline. **Powered by Mistral Large 3 via AWS Bedrock** for all LLM text generation and **Voxtral via AWS Bedrock** for audio transcription. Processes episodes through multi-phase pipeline: voiceover ingestion, B-roll enrichment, semantic matching, cut plan generation, and video rendering.
+BullMQ background job workers for AI-powered video editing pipeline. **Powered by Magistral Small via AWS Bedrock** for all LLM text generation and **Voxtral via AWS Bedrock** for audio transcription. Processes episodes through multi-phase pipeline: voiceover ingestion, B-roll enrichment, semantic matching, cut plan generation, and video rendering.
 
 ## Job Pipeline Phases
 
@@ -9,11 +9,11 @@ Ingests raw voiceover audio, transcribes, cleans, and segments into microunits w
 
 - **voiceoverIngest**: Upload raw voiceover to Mux, store S3 key
 - **voiceoverTranscript**: Extract word-level timestamps — **Voxtral via AWS Bedrock (primary)** or Deepgram (fallback), normalize and store
-- **voiceoverTranscriptCorrection**: LLM-based correction of transcript errors (3 LLM calls with different strategies) — **Mistral Large 3 via AWS Bedrock (primary LLM)**
+- **voiceoverTranscriptCorrection**: LLM-based correction of transcript errors (3 LLM calls with different strategies) — **Magistral Small via AWS Bedrock (primary LLM)**
 - **voiceoverTakeSelection**: Select best transcription from multiple takes using heuristics and LLM scoring
 - **voiceoverSilenceDetection**: Identify silence gaps and filler words (um, uh, etc.) from transcript
 - **voiceoverCleaning**: Remove detected silence/fillers from audio, create clean voiceover
-- **voiceoverSegmentation**: Split clean voiceover into micro-segments (~3-5s each) with semantic embeddings and emotional tone detection — **Mistral Large 3 for tone/keywords analysis**
+- **voiceoverSegmentation**: Split clean voiceover into micro-segments (~3-5s each) with semantic embeddings and emotional tone detection — **Magistral Small for tone/keywords analysis**
 
 ### Phase 2: B-Roll Chunk Pipeline (8 jobs)
 Ingests B-roll clips, chunks them (2s each), and enriches with AI analysis and embeddings.
@@ -31,7 +31,7 @@ Ingests B-roll clips, chunks them (2s each), and enriches with AI analysis and e
 Matches voiceover segments to B-roll chunks and generates optimized cut plan.
 
 - **semanticMatching**: Match each voiceover segment to top B-roll chunks using pgvector similarity search, store candidates per segment
-- **creativeEditPlan**: Generate creative direction brief for per-segment edit decisions — **Mistral Large 3 as creative director LLM**
+- **creativeEditPlan**: Generate creative direction brief for per-segment edit decisions — **Magistral Small as creative director LLM**
 - **cutPlanGeneration**: Build MicroCutPlanV2 from segment candidates with intelligent chunk selection and alternating A-roll/B-roll timeline policy
 - **cutPlanValidation**: Verify all assets exist, timing is valid, and render specs are complete
 
@@ -67,13 +67,13 @@ flowchart TB
 
 | Service/Job | Function | Primary (Mistral) | Fallback |
 |---|---|---|---|
-| scriptKeyterms.ts | extractKeytermsWithLlm() | Mistral Large 3 (Bedrock) | Gemini, OpenAI |
-| voiceoverTranscriptCorrection.ts | callTranscriptCorrectionLlm() | Mistral Large 3 (Bedrock) | Gemini, OpenAI |
-| voiceoverEditPlanVerification.ts | callVerificationLlm() | Mistral Large 3 (Bedrock) | Gemini, OpenAI |
-| scriptAlignment.ts | callAlignmentLlm() | Mistral Large 3 (Bedrock) | Gemini, OpenAI |
-| gemini.ts | selectChunksForSegment() | Mistral Large 3 (Bedrock) | Gemini, OpenAI |
-| creativeEditPlan.ts | callCreativeDirectorLlm() | Mistral Large 3 (Bedrock) | Gemini, OpenAI |
-| voiceoverSegmentation.ts | callUnitAnalysis() | Mistral Large 3 (Bedrock) | Gemini, OpenAI |
+| scriptKeyterms.ts | extractKeytermsWithLlm() | Magistral Small (Bedrock) | Gemini, OpenAI |
+| voiceoverTranscriptCorrection.ts | callTranscriptCorrectionLlm() | Magistral Small (Bedrock) | Gemini, OpenAI |
+| voiceoverEditPlanVerification.ts | callVerificationLlm() | Magistral Small (Bedrock) | Gemini, OpenAI |
+| scriptAlignment.ts | callAlignmentLlm() | Magistral Small (Bedrock) | Gemini, OpenAI |
+| gemini.ts | selectChunksForSegment() | Magistral Small (Bedrock) | Gemini, OpenAI |
+| creativeEditPlan.ts | callCreativeDirectorLlm() | Magistral Small (Bedrock) | Gemini, OpenAI |
+| voiceoverSegmentation.ts | callUnitAnalysis() | Magistral Small (Bedrock) | Gemini, OpenAI |
 | transcription.ts | transcribe() | Voxtral (Bedrock) | Deepgram |
 
 ### Mistral/Bedrock Call Flow
@@ -84,7 +84,7 @@ sequenceDiagram
     participant LP as llmProvider.ts
     participant BM as bedrockMistral.ts
     participant AWS as AWS Bedrock
-    participant ML3 as Mistral Large 3
+    participant ML3 as Magistral Small
 
     Job->>LP: getProvider()
     LP-->>Job: "mistral"
@@ -105,7 +105,7 @@ sequenceDiagram
 - **progress.ts**: Real-time job progress publishing (Socket.IO to API)
 
 ### AI & Content Analysis
-- **bedrockMistral.ts**: AWS Bedrock Mistral Large 3 integration — **PRIMARY LLM provider** via Converse API
+- **bedrockMistral.ts**: AWS Bedrock Magistral Small integration — **PRIMARY LLM provider** via Converse API
 - **voxtral.ts**: AWS Bedrock Voxtral — **PRIMARY transcription provider**
 - **llmProvider.ts**: Provider abstraction for multi-vendor LLM support (Mistral, Gemini, OpenAI, Runpod vLLM)
 - **gemini.ts**: Google Gemini and OpenAI integration for chunk selection, semantic understanding (fallback)
@@ -208,7 +208,7 @@ When both phases ready:
 - **Package**: pnpm monorepo workspace
 - **Queue**: BullMQ with Redis backend (Upstash)
 - **Database**: Prisma v6 + Neon PostgreSQL with pgvector
-- **External**: **AWS Bedrock (Mistral Large 3 + Voxtral)** (primary AI), Mux (video CDN), S3 (asset storage), Gemini/OpenAI (LLM fallback), Deepgram (transcription fallback)
+- **External**: **AWS Bedrock (Magistral Small + Voxtral)** (primary AI), Mux (video CDN), S3 (asset storage), Gemini/OpenAI (LLM fallback), Deepgram (transcription fallback)
 
 ### Runtime Modes
 - **Redis available**: Job queue via BullMQ, real-time progress

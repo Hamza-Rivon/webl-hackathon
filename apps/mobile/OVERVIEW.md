@@ -1,7 +1,7 @@
 # WEBL Mobile App Architecture
 
 ## Overview
-React Native Expo app (v54) with Expo Router for navigation, Zustand for state management, and NativeWind for styling. Handles multi-phase video processing pipeline with real-time status tracking, blocking states during processing, and session restoration. The app connects to a backend powered by **Mistral Large 3 via AWS Bedrock** for all AI-driven video editing intelligence and **Voxtral via AWS Bedrock** for audio transcription.
+React Native Expo app (v54) with Expo Router for navigation, Zustand for state management, and NativeWind for styling. Handles multi-phase video processing pipeline with real-time status tracking, blocking states during processing, and session restoration. The app connects to a backend powered by **Magistral Small via AWS Bedrock** for all AI-driven video editing intelligence and **Voxtral via AWS Bedrock** for audio transcription.
 
 ## Core Architecture
 
@@ -199,7 +199,7 @@ flowchart LR
     Mobile["📱 Mobile App"] -->|REST + Socket.IO| API["🔌 API Server"]
     API -->|BullMQ Jobs| Workers["⚙️ Workers"]
     Workers -->|Converse API| Bedrock["☁️ AWS Bedrock"]
-    Bedrock --> Mistral["🤖 Mistral Large 3\n(Text Generation)"]
+    Bedrock --> Mistral["🤖 Magistral Small\n(Text Generation)"]
     Bedrock --> Voxtral["🎙️ Voxtral\n(Transcription)"]
     Workers -->|Embeddings| OpenAI["OpenAI\n(Embeddings only)"]
 ```
@@ -233,9 +233,9 @@ failed → [error state]
 Two mechanisms detect blocking:
 1. **Status-based**: Episode status in BLOCKING_STATUSES list
 2. **Job-based**: Active jobs in blocking job types
-   - Phase 1: voiceover_* jobs — Powered by Voxtral (transcription) and Mistral Large 3 (transcript correction, segmentation)
-   - Phase 2: broll_*, slot_clip_*, chunk_* jobs — Mistral Large 3 for chunk enrichment analysis
-   - Phase 3: semantic_matching, creative_edit_plan — Mistral Large 3 for creative edit planning
+   - Phase 1: voiceover_* jobs — Powered by Voxtral (transcription) and Magistral Small (transcript correction, segmentation)
+   - Phase 2: broll_*, slot_clip_*, chunk_* jobs — Magistral Small for chunk enrichment analysis
+   - Phase 3: semantic_matching, creative_edit_plan — Magistral Small for creative edit planning
    - Phase 5: ffmpeg_render*, mux_publish
 
 When blocking detected, shows confirmation dialog on navigation.

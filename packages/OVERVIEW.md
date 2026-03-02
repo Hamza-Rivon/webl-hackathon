@@ -46,7 +46,7 @@ Shared business logic and utilities:
 
 ### Other
 
-- **prompts/** — LLM prompts for voiceover and script archetype generation, optimized for Mistral Large 3's instruction format
+- **prompts/** — LLM prompts for voiceover and script archetype generation, optimized for Magistral Small's instruction format
 - **constants/index.ts** — Global config (Gemini API, Mux tokens, file size limits, chunk duration)
 
 ## apps/workers Configuration
@@ -54,7 +54,7 @@ Shared business logic and utilities:
 The workers app (`src/config.ts`) centralizes environment configuration for all background jobs. The `AI_PROVIDER` environment variable defaults to `mistral`, which routes all LLM text generation through AWS Bedrock's Converse API. Mistral is the primary and default provider for the platform.
 
 The `bedrock` config block supports both core Mistral models on AWS Bedrock:
-- `mistralModel` — **Mistral Large 3** (`mistral.magistral-small-2509`) for all text generation tasks: cut plan generation, script analysis, voiceover transcript correction, B-roll enrichment, and creative edit planning
+- `mistralModel` — **Magistral Small** (`mistral.magistral-small-2509`) for all text generation tasks: cut plan generation, script analysis, voiceover transcript correction, B-roll enrichment, and creative edit planning
 - `voxtralModel` — **Voxtral** for high-quality audio transcription with word-level timestamps
 
 ## packages/prisma
@@ -130,7 +130,7 @@ flowchart LR
 
     subgraph "apps/workers"
         Config["config.ts\nAI_PROVIDER=mistral ★"]
-        BM["bedrockMistral.ts\nMistral Large 3"]
+        BM["bedrockMistral.ts\nMagistral Small\n(Bedrock Converse API)"]
         VX["voxtral.ts\nVoxtral Transcription"]
         LP["llmProvider.ts\nProvider Abstraction"]
     end
@@ -151,8 +151,8 @@ flowchart LR
 
 ## Key Decisions
 
-- **Mistral Large 3 via AWS Bedrock** as default LLM provider for all text generation — leveraging Bedrock's Converse API for unified chat interface
-- **Voxtral via AWS Bedrock** as primary transcription provider — high-quality audio transcription with word-level timestamps
+- **Magistral Small via AWS Bedrock** as default LLM provider for all text generation — leveraging Bedrock's Converse API for unified chat interface
+- **Voxtral Small 24B via AWS Bedrock** as primary transcription provider — high-quality audio transcription with word-level timestamps
 - **Neon PostgreSQL + pgvector** for scalable embeddings and semantic search
 - **Zod validation** ensures type safety at API boundaries
 - **S3 canonical storage** with signed URLs for secure uploads/downloads
